@@ -2,9 +2,13 @@
 # 1️⃣ Provider
 # ===============================
 provider "aws" {
+
   region     = "us-east-1"
- 
+
+
 }
+
+
 
 terraform {
   required_providers {
@@ -201,13 +205,3 @@ resource "aws_db_instance" "mydb" {
   skip_final_snapshot    = true
 }
 
-# ===============================
-# 13️⃣ Output EC2 Public IP & RDS Endpoint
-# ===============================
-output "ec2_public_ip" {
-  value = aws_instance.demo.public_ip
-}
-
-output "rds_endpoint" {
-  value = aws_db_instance.mydb.endpoint
-}
