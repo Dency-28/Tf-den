@@ -41,13 +41,14 @@ resource "aws_dynamodb_table" "tf_locks" {
   }
 }
 
-# terraform {
-#   backend "s3" {
-#     bucket         = "tf-state-dency"
-#     key            = "global/terraform.tfstate"
-#     region         = "us-east-1"
-#     dynamodb_table = "tf-state-locks"
-#     encrypt        = true
-#   }
-# }
+terraform {
+  backend "s3" {
+    bucket         = "tf-state-dency"
+    key            = "global/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "tf-state-locks"
+    encrypt        = true
+  }
+}
+
 
