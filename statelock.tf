@@ -1,6 +1,6 @@
 
 resource "aws_s3_bucket" "tf_state" {
-  bucket = "tf-state-dency"  
+  bucket = "tf-state-dency"  # Must be globally unique
   force_destroy = true
 
   tags = {
@@ -41,13 +41,12 @@ resource "aws_dynamodb_table" "tf_locks" {
   }
 }
 
-# terraform {
-#   backend "s3" {
-#     bucket         = "tf-state-dency"
-#     key            = "global/terraform.tfstate"
-#     region         = "us-east-1"
-#     dynamodb_table = "tf-state-locks"
-#     encrypt        = true
-#   }
-# }
-
+terraform {
+  backend "s3" {
+    bucket         = "tf-state-dency"
+    key            = "global/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "tf-state-locks"
+    encrypt        = true
+  }
+}
