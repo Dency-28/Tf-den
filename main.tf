@@ -2,13 +2,8 @@
 # 1️⃣ Provider
 # ===============================
 provider "aws" {
-
-  region     = "us-east-1"
-
-
+  region = "us-east-1"
 }
-
-
 
 terraform {
   required_providers {
@@ -87,7 +82,7 @@ resource "aws_route_table_association" "demo_public_assoc" {
 # 7️⃣ Security Group for EC2
 # ===============================
 resource "aws_security_group" "ec2_sg" {
-  name        = "ec2-sg"
+  name        = "ec2-sg-demo"
   description = "Allow SSH and HTTP"
   vpc_id      = aws_vpc.demo_vpc.id
 
@@ -117,7 +112,7 @@ resource "aws_security_group" "ec2_sg" {
 # 8️⃣ Security Group for RDS
 # ===============================
 resource "aws_security_group" "rds_sg" {
-  name        = "rds-sg"
+  name        = "rds-sg-demo"
   description = "Allow MySQL from EC2"
   vpc_id      = aws_vpc.demo_vpc.id
 
@@ -125,7 +120,7 @@ resource "aws_security_group" "rds_sg" {
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
-    security_groups = [aws_security_group.ec2_sg.id]  # Allow EC2 SG
+    security_groups = [aws_security_group.ec2_sg.id]
   }
 
   egress {
@@ -140,7 +135,7 @@ resource "aws_security_group" "rds_sg" {
 # 9️⃣ IAM Role for EC2
 # ===============================
 resource "aws_iam_role" "ec2_role" {
-  name = "ec2-s3-role"
+  name = "ec2-s3-role-demo"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -153,14 +148,13 @@ resource "aws_iam_role" "ec2_role" {
 }
 
 resource "aws_iam_policy_attachment" "ec2_s3_attach" {
-  name       = "ec2-s3-attach"
+  name       = "ec2-s3-attach-demo"
   roles      = [aws_iam_role.ec2_role.name]
   policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
 }
 
-# IAM Instance Profile
 resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "ec2-instance-profile"
+  name = "ec2-instance-profile-demo"
   role = aws_iam_role.ec2_role.name
 }
 
@@ -168,8 +162,8 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 # 10️⃣ EC2 Instance
 # ===============================
 resource "aws_instance" "demo" {
-  ami                    = "ami-08982f1c5bf93d976"  # Amazon Linux 2
-  instance_type           = "t3.micro"
+  ami                    = "ami-08982f1c5bf93d976"
+  instance_type          = "t3.micro"
   subnet_id              = aws_subnet.demo_public_subnet.id
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
@@ -178,15 +172,15 @@ resource "aws_instance" "demo" {
 }
 
 # ===============================
-# 11️⃣ RDS Subnet Group (2 AZs)
+# 11️⃣ RDS Subnet Group
 # ===============================
 resource "aws_db_subnet_group" "rds_subnet" {
-  name       = "rds-subnet-group"
+  name       = "rds-subnet-group-demo"
   subnet_ids = [
     aws_subnet.demo_private_subnet_a.id,
     aws_subnet.demo_private_subnet_b.id
   ]
-  tags = { Name = "rds-subnet-group" }
+  tags = { Name = "rds-subnet-group-demo" }
 }
 
 # ===============================
@@ -197,11 +191,10 @@ resource "aws_db_instance" "mydb" {
   engine                 = "mysql"
   engine_version         = "8.0"
   instance_class         = "db.t3.micro"
-  db_name                = "mydb"           # Correct argument
+  db_name                = "mydb"
   username               = "admin"
-  password               = "Admin12345!"    # For practice only
+  password               = "Admin12345!"
   db_subnet_group_name   = aws_db_subnet_group.rds_subnet.name
   vpc_security_group_ids = [aws_security_group.rds_sg.id]
   skip_final_snapshot    = true
 }
-
