@@ -6,7 +6,7 @@ terraform {
     bucket        = "tf-state-dency"
     key           = "terraform.tfstate"
     region        = "us-east-1"
-    use_lockfile  = true
+    
   }
 
   required_providers {
