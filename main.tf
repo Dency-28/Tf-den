@@ -1,17 +1,24 @@
 # ===============================
-# 1️⃣ Provider
+# 1️⃣ Provider & Backend
 # ===============================
-provider "aws" {
-  region = "us-east-1"
-}
-
 terraform {
+  backend "s3" {
+    bucket        = "tf-state-dency"
+    key           = "terraform.tfstate"
+    region        = "us-east-1"
+    use_lockfile  = true
+  }
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
   }
+}
+
+provider "aws" {
+  region = "us-east-1"
 }
 
 # ===============================
@@ -85,7 +92,6 @@ resource "aws_security_group" "ec2_sg" {
   name        = "ec2-sg-demo"
   description = "Allow SSH and HTTP"
   vpc_id      = aws_vpc.demo_vpc.id
-
   ingress {
     from_port   = 22
     to_port     = 22
@@ -159,7 +165,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 }
 
 # ===============================
-# 10️⃣ EC2 Instance
+# 🔟 EC2 Instance
 # ===============================
 resource "aws_instance" "demo" {
   ami                    = "ami-08982f1c5bf93d976"
@@ -172,7 +178,7 @@ resource "aws_instance" "demo" {
 }
 
 # ===============================
-# 11️⃣ RDS Subnet Group
+# 1️⃣1️⃣ RDS Subnet Group
 # ===============================
 resource "aws_db_subnet_group" "rds_subnet" {
   name       = "rds-subnet-group-demo1"
@@ -184,7 +190,7 @@ resource "aws_db_subnet_group" "rds_subnet" {
 }
 
 # ===============================
-# 12️⃣ RDS Instance
+# 1️⃣2️⃣ RDS Instance
 # ===============================
 resource "aws_db_instance" "mydb" {
   allocated_storage      = 20
@@ -197,4 +203,62 @@ resource "aws_db_instance" "mydb" {
   db_subnet_group_name   = aws_db_subnet_group.rds_subnet.name
   vpc_security_group_ids = [aws_security_group.rds_sg.id]
   skip_final_snapshot    = true
+}
+
+# ===============================
+# 🗃️ S3 Bucket for Remote State
+# ===============================
+resource "aws_s3_bucket" "tf_state" {
+  bucket        = "tf-state-dency"
+  force_destroy = true
+
+  tags = {
+    Name = "Terraform State Bucket"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "tf_state_versioning" {
+  bucket = aws_s3_bucket.tf_state.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "tf_state_encryption" {
+  bucket = aws_s3_bucket.tf_state.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# ===============================
+# 🔒 DynamoDB Table for Locking
+# ===============================
+resource "aws_dynamodb_table" "tf_locks" {
+  name         = "tf-state-locks"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "LockID"
+
+  attribute {
+    name = "LockID"
+    type = "S"
+  }
+
+  tags = {
+    Name = "Terraform State Lock Table"
+  }
+}
+
+
+
+output "ec2_public_ip" {
+  value = aws_instance.demo.public_ip
+}
+
+output "rds_endpoint" {
+  value = aws_db_instance.mydb.endpoint
 }
