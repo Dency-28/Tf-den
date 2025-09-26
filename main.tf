@@ -175,7 +175,7 @@ resource "aws_instance" "demo" {
 # 11️⃣ RDS Subnet Group
 # ===============================
 resource "aws_db_subnet_group" "rds_subnet" {
-  name       = "rds-subnet-group-demo"
+  name       = "rds-subnet-group-demo1"
   subnet_ids = [
     aws_subnet.demo_private_subnet_a.id,
     aws_subnet.demo_private_subnet_b.id

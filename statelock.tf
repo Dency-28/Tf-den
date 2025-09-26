@@ -1,4 +1,3 @@
-
 resource "aws_s3_bucket" "tf_state" {
   bucket = "tf-state-dency"  # Must be globally unique
   force_destroy = true
