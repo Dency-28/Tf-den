@@ -28,7 +28,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Terraform Init with Reconfigure
-        run: terraform init -reconfigure
+        run: terraform -chdir=terraform_backend init -reconfigure
 
       - name: Terraform Destroy
-        run: terraform destroy -auto-approve
+        run: terraform -chdir=terraform_backend destroy -auto-approve
