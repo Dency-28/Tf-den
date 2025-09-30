@@ -90,7 +90,7 @@ resource "aws_security_group" "ec2_sg" {
 resource "aws_security_group" "rds_sg" {
   name        = "rds-sg-demo"
   description = "Allow MySQL from EC2"
-  = aws_vpc.demo_vpc.id
+  vpc_id      = aws_vpc.demo_vpc.id
 
   ingress {
     from_port       = 3306
