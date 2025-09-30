@@ -1,4 +1,4 @@
-name: Terraform Destroy Backend 
+name: Terraform Destroy Backend
 
 on:
   workflow_dispatch:
@@ -27,8 +27,8 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Init (Backend - Local)
-        run: terraform -chdir=terraform_backend init -backend=false
+      - name: Terraform Init (Backend - Remote)
+        run: terraform -chdir=terraform_backend init
 
       - name: Terraform Destroy (Backend)
         run: terraform -chdir=terraform_backend destroy -auto-approve
