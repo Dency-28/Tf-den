@@ -1,4 +1,4 @@
-name: Terraform Destroy Backend 
+name: Terraform Destroy Backend
 
 on:
   workflow_dispatch:
