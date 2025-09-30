@@ -1,14 +1,4 @@
-# ===============================
-# 1️⃣ Provider & Backend
-# ===============================
 terraform {
-  backend "s3" {
-    bucket        = "tf-state-dency"
-    key           = "terraform.tfstate"
-    region        = "us-east-1"
-    
-  }
-
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -21,18 +11,12 @@ provider "aws" {
   region = "us-east-1"
 }
 
-# ===============================
-# 2️⃣ VPC
-# ===============================
 resource "aws_vpc" "demo_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   tags = { Name = "demo-vpc" }
 }
 
-# ===============================
-# 3️⃣ Public Subnet (EC2)
-# ===============================
 resource "aws_subnet" "demo_public_subnet" {
   vpc_id                  = aws_vpc.demo_vpc.id
   cidr_block              = "10.0.1.0/24"
@@ -41,9 +25,6 @@ resource "aws_subnet" "demo_public_subnet" {
   tags = { Name = "demo-public-subnet" }
 }
 
-# ===============================
-# 4️⃣ Private Subnets (RDS)
-# ===============================
 resource "aws_subnet" "demo_private_subnet_a" {
   vpc_id            = aws_vpc.demo_vpc.id
   cidr_block        = "10.0.2.0/24"
@@ -58,17 +39,11 @@ resource "aws_subnet" "demo_private_subnet_b" {
   tags = { Name = "demo-private-subnet-b" }
 }
 
-# ===============================
-# 5️⃣ Internet Gateway
-# ===============================
 resource "aws_internet_gateway" "demo_igw" {
   vpc_id = aws_vpc.demo_vpc.id
   tags   = { Name = "demo-igw" }
 }
 
-# ===============================
-# 6️⃣ Route Table for Public Subnet
-# ===============================
 resource "aws_route_table" "demo_public_rt" {
   vpc_id = aws_vpc.demo_vpc.id
 
@@ -85,18 +60,16 @@ resource "aws_route_table_association" "demo_public_assoc" {
   route_table_id = aws_route_table.demo_public_rt.id
 }
 
-# ===============================
-# 7️⃣ Security Group for EC2
-# ===============================
 resource "aws_security_group" "ec2_sg" {
   name        = "ec2-sg-demo"
   description = "Allow SSH and HTTP"
   vpc_id      = aws_vpc.demo_vpc.id
+
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["208.127.30.55/32"]  # Replace with your public IP
+    cidr_blocks = ["208.127.30.55/32"]
   }
 
   ingress {
@@ -114,9 +87,6 @@ resource "aws_security_group" "ec2_sg" {
   }
 }
 
-# ===============================
-# 8️⃣ Security Group for RDS
-# ===============================
 resource "aws_security_group" "rds_sg" {
   name        = "rds-sg-demo"
   description = "Allow MySQL from EC2"
@@ -129,7 +99,7 @@ resource "aws_security_group" "rds_sg" {
     security_groups = [aws_security_group.ec2_sg.id]
   }
 
-  egress {
+ gress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -137,9 +107,6 @@ resource "aws_security_group" "rds_sg" {
   }
 }
 
-# ===============================
-# 9️⃣ IAM Role for EC2
-# ===============================
 resource "aws_iam_role" "ec2_role" {
   name = "ec2-s3-role-demo"
 
@@ -164,9 +131,6 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_role.name
 }
 
-# ===============================
-# 🔟 EC2 Instance
-# ===============================
 resource "aws_instance" "demo" {
   ami                    = "ami-08982f1c5bf93d976"
   instance_type          = "t3.micro"
@@ -177,9 +141,6 @@ resource "aws_instance" "demo" {
   tags = { Name = "Tf-Demo-EC2" }
 }
 
-# ===============================
-# 1️⃣1️⃣ RDS Subnet Group
-# ===============================
 resource "aws_db_subnet_group" "rds_subnet" {
   name       = "rds-subnet-group-demo1"
   subnet_ids = [
@@ -189,9 +150,6 @@ resource "aws_db_subnet_group" "rds_subnet" {
   tags = { Name = "rds-subnet-group-demo" }
 }
 
-# ===============================
-# 1️⃣2️⃣ RDS Instance
-# ===============================
 resource "aws_db_instance" "mydb" {
   allocated_storage      = 20
   engine                 = "mysql"
@@ -204,56 +162,6 @@ resource "aws_db_instance" "mydb" {
   vpc_security_group_ids = [aws_security_group.rds_sg.id]
   skip_final_snapshot    = true
 }
-
-# ===============================
-# 🗃️ S3 Bucket for Remote State
-# ===============================
-resource "aws_s3_bucket" "tf_state" {
-  bucket        = "tf-state-dency"
-  force_destroy = true
-
-  tags = {
-    Name = "Terraform State Bucket"
-  }
-}
-
-resource "aws_s3_bucket_versioning" "tf_state_versioning" {
-  bucket = aws_s3_bucket.tf_state.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "tf_state_encryption" {
-  bucket = aws_s3_bucket.tf_state.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-# ===============================
-# 🔒 DynamoDB Table for Locking
-# ===============================
-resource "aws_dynamodb_table" "tf_locks" {
-  name         = "tf-state-locks"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
-
-  tags = {
-    Name = "Terraform State Lock Table"
-  }
-}
-
-
 
 output "ec2_public_ip" {
   value = aws_instance.demo.public_ip
