@@ -1,11 +1,14 @@
-name: Terraform Destroy
+name: Terraform CI/CD
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-  terraform-destroy:
-    name: Destroy Infrastructure
+  terraform:
+    name: Terraform Deployment
     runs-on: ubuntu-latest
 
     env:
@@ -27,11 +30,30 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Init with Backend
-        run: terraform -chdir=terraform_backend init -reconfigure
+      # ───────────────────────────────
+      # Step 1: Apply terraform_backend
+      # ───────────────────────────────
+      - name: Terraform Init (Backend)
+        run: terraform -chdir=terraform_backend init
 
-      - name: Terraform Show State (Debug)
-        run: terraform -chdir=terraform_backend show
+      - name: Terraform Apply (Backend)
+        run: terraform -chdir=terraform_backend apply -auto-approve
 
-      - name: Terraform Destroy All Resources
-        run: terraform -chdir=terraform_backend destroy -auto-approve
+      # ───────────────────────────────
+      # Step 2: Apply terraform_infra
+      # ───────────────────────────────
+      - name: Terraform Init (Infra)
+        run: terraform -chdir=terraform_infra init -reconfigure
+
+      - name: Terraform Format (Infra)
+        run: terraform -chdir=terraform_infra fmt
+
+      - name: Terraform Validate (Infra)
+        run: terraform -chdir=terraform_infra validate
+
+      - name: Terraform Plan (Infra)
+        run: terraform -chdir=terraform_infra plan -out=tfplan
+
+      - name: Terraform Apply (Infra)
+        if: success()
+        run: terraform -chdir=terraform_infra apply -auto-approve tfplan
