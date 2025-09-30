@@ -127,7 +127,7 @@ resource "aws_iam_policy_attachment" "ec2_s3_attach" {
 }
 
 resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "ec2-instance-profile-demo1"
+  name = "ec2-instance-profile-demo11"
   role = aws_iam_role.ec2_role.name
 }
 
@@ -142,7 +142,7 @@ resource "aws_instance" "demo" {
 }
 
 resource "aws_db_subnet_group" "rds_subnet" {
-  name       = "rds-subnet-group-demo2"
+  name       = "rds-subnet-group-demo11"
   subnet_ids = [
     aws_subnet.demo_private_subnet_a.id,
     aws_subnet.demo_private_subnet_b.id
