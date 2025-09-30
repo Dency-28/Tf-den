@@ -30,18 +30,30 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Init with Reconfigure
-        run: terraform init -reconfigure
+      # ───────────────────────────────
+      # Step 1: Apply terraform_backend
+      # ───────────────────────────────
+      - name: Terraform Init (Backend)
+        run: terraform -chdir=terraform_backend init
 
-      - name: Terraform Format (Auto-fix)
-        run: terraform fmt
+      - name: Terraform Apply (Backend)
+        run: terraform -chdir=terraform_backend apply -auto-approve
 
-      - name: Terraform Validate
-        run: terraform validate
+      # ───────────────────────────────
+      # Step 2: Apply terraform_infra
+      # ───────────────────────────────
+      - name: Terraform Init (Infra)
+        run: terraform -chdir=terraform_infra init -reconfigure
 
-      - name: Terraform Plan
-        run: terraform plan -out=tfplan
+      - name: Terraform Format (Infra)
+        run: terraform -chdir=terraform_infra fmt
 
-      - name: Terraform Apply
+      - name: Terraform Validate (Infra)
+        run: terraform -chdir=terraform_infra validate
+
+      - name: Terraform Plan (Infra)
+        run: terraform -chdir=terraform_infra plan -out=tfplan
+
+      - name: Terraform Apply (Infra)
         if: success()
-        run: terraform apply -auto-approve tfplan
+        run: terraform -chdir=terraform_infra apply -auto-approve tfplan
