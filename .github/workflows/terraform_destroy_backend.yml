@@ -30,5 +30,8 @@ jobs:
       - name: Terraform Init (Backend - Remote)
         run: terraform -chdir=terraform_backend init
 
+      - name: Terraform State List (Debug)
+        run: terraform -chdir=terraform_backend state list
+
       - name: Terraform Destroy (Backend)
         run: terraform -chdir=terraform_backend destroy -auto-approve
