@@ -11,12 +11,14 @@ provider "aws" {
   region = "us-east-1"
 }
 
+# VPC
 resource "aws_vpc" "demo_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   tags = { Name = "demo-vpc" }
 }
 
+# Subnets
 resource "aws_subnet" "demo_public_subnet" {
   vpc_id                  = aws_vpc.demo_vpc.id
   cidr_block              = "10.0.1.0/24"
@@ -39,11 +41,13 @@ resource "aws_subnet" "demo_private_subnet_b" {
   tags = { Name = "demo-private-subnet-b" }
 }
 
+# Internet Gateway
 resource "aws_internet_gateway" "demo_igw" {
   vpc_id = aws_vpc.demo_vpc.id
   tags   = { Name = "demo-igw" }
 }
 
+# Route Table
 resource "aws_route_table" "demo_public_rt" {
   vpc_id = aws_vpc.demo_vpc.id
 
@@ -60,6 +64,7 @@ resource "aws_route_table_association" "demo_public_assoc" {
   route_table_id = aws_route_table.demo_public_rt.id
 }
 
+# Security Groups
 resource "aws_security_group" "ec2_sg" {
   name        = "ec2-sg-demo"
   description = "Allow SSH and HTTP"
@@ -107,6 +112,7 @@ resource "aws_security_group" "rds_sg" {
   }
 }
 
+# IAM Role and Instance Profile
 resource "aws_iam_role" "ec2_role" {
   name = "ec2-s3-role-demo"
 
@@ -131,6 +137,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_role.name
 }
 
+# EC2 Instance
 resource "aws_instance" "demo" {
   ami                    = "ami-08982f1c5bf93d976"
   instance_type          = "t3.micro"
@@ -141,6 +148,7 @@ resource "aws_instance" "demo" {
   tags = { Name = "Tf-Demo-EC2" }
 }
 
+# RDS Subnet Group and Instance
 resource "aws_db_subnet_group" "rds_subnet" {
   name       = "rds-subnet-group-demo11"
   subnet_ids = [
@@ -163,6 +171,7 @@ resource "aws_db_instance" "mydb" {
   skip_final_snapshot    = true
 }
 
+# Outputs
 output "ec2_public_ip" {
   value = aws_instance.demo.public_ip
 }
