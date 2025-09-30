@@ -1,11 +1,11 @@
-name: Terraform Destroy Backend
+name: Terraform Destroy Only
 
 on:
   workflow_dispatch:
 
 jobs:
   terraform:
-    name: Destroy Backend Resources
+    name: Destroy Infrastructure
     runs-on: ubuntu-latest
 
     env:
@@ -27,17 +27,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Init (Backend)
+      - name: Terraform Init
         run: terraform -chdir=terraform_backend init
-
-      - name: Import S3 Bucket
-        run: terraform -chdir=terraform_backend import aws_s3_bucket.tf_state tf-state-dency || echo "S3 already imported"
-
-      - name: Import DynamoDB Table
-        run: terraform -chdir=terraform_backend import aws_dynamodb_table.tf_locks tf-state-locks || echo "DynamoDB already imported"
 
       - name: Terraform State List (Debug)
         run: terraform -chdir=terraform_backend state list
 
-      - name: Terraform Destroy (Backend)
+      - name: Terraform Destroy
         run: terraform -chdir=terraform_backend destroy -auto-approve
