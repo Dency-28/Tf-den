@@ -142,7 +142,7 @@ resource "aws_instance" "demo" {
 }
 
 resource "aws_db_subnet_group" "rds_subnet" {
-  name       = "rds-subnet-group-demo1"
+  name       = "rds-subnet-group-demo2"
   subnet_ids = [
     aws_subnet.demo_private_subnet_a.id,
     aws_subnet.demo_private_subnet_b.id
