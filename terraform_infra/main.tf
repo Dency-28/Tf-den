@@ -111,7 +111,7 @@ resource "aws_security_group" "rds_sg" {
 
 # IAM Role and Instance Profile
 resource "aws_iam_role" "ec2_role" {
-  name = "ec2-s3-role-demo"
+  name = "ec2-s3-role-demo1"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
