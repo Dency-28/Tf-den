@@ -90,7 +90,7 @@ resource "aws_security_group" "ec2_sg" {
 resource "aws_security_group" "rds_sg" {
   name        = "rds-sg-demo"
   description = "Allow MySQL from EC2"
-  vpc_id      = aws_vpc.demo_vpc.id
+  = aws_vpc.demo_vpc.id
 
   ingress {
     from_port       = 3306
@@ -99,7 +99,7 @@ resource "aws_security_group" "rds_sg" {
     security_groups = [aws_security_group.ec2_sg.id]
   }
 
- gress {
+  egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -161,48 +161,6 @@ resource "aws_db_instance" "mydb" {
   db_subnet_group_name   = aws_db_subnet_group.rds_subnet.name
   vpc_security_group_ids = [aws_security_group.rds_sg.id]
   skip_final_snapshot    = true
-}
-
-resource "aws_s3_bucket" "tf_state" {
-  bucket        = "tf-state-dency"
-  force_destroy = true
-
-  tags = {
-    Name = "Terraform State Bucket"
-  }
-}
-
-resource "aws_s3_bucket_versioning" "tf_state_versioning" {
-  bucket = aws_s3_bucket.tf_state.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "tf_state_encryption" {
-  bucket = aws_s3_bucket.tf_state.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-resource "aws_dynamodb_table" "tf_locks" {
-  name         = "tf-state-locks"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
-
-  tags = {
-    Name = "Terraform State Lock Table"
-  }
 }
 
 output "ec2_public_ip" {
