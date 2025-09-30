@@ -127,7 +127,7 @@ resource "aws_iam_policy_attachment" "ec2_s3_attach" {
 }
 
 resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "ec2-instance-profile-demo"
+  name = "ec2-instance-profile-demo1"
   role = aws_iam_role.ec2_role.name
 }
 
