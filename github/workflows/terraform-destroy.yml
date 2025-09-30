@@ -1,5 +1,5 @@
 name: Terraform Destroy
- 
+
 on:
   workflow_dispatch:  # Manual trigger only
 
@@ -27,8 +27,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Init with Reconfigure
+      - name: Terraform Init with Backend
         run: terraform -chdir=terraform_backend init -reconfigure
 
-      - name: Terraform Destroy
+      - name: Terraform Show State (Debug)
+        run: terraform -chdir=terraform_backend show
+
+      - name: Terraform Destroy All Resources
         run: terraform -chdir=terraform_backend destroy -auto-approve
