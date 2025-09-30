@@ -27,11 +27,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Init (Backend - Remote)
+      - name: Terraform Init (Backend)
         run: terraform -chdir=terraform_backend init
 
-      - name: Terraform State List (Debug)
-        run: terraform -chdir=terraform_backend state list
+      - name: Terraform Import S3 Bucket
+        run: terraform -chdir=terraform_backend import aws_s3_bucket.tf_state tf-state-dency
+
+      - name: Terraform Import DynamoDB Table
+        run: terraform -chdir=terraform_backend import aws_dynamodb_table.tf_locks tf-state-locks
 
       - name: Terraform Destroy (Backend)
         run: terraform -chdir=terraform_backend destroy -auto-approve
