@@ -1,4 +1,4 @@
-name: Terraform CI/CD
+name: Terraform Full CI/CD
 
 on:
   push:
@@ -43,19 +43,29 @@ jobs:
         run: terraform -chdir=terraform_backend apply -auto-approve
 
       # ───────────────────────────────
-      # Step 2: Initialize infra with remote backend (S3 bucket now exists)
+      # Step 2: Initialize backend with remote S3
       # ───────────────────────────────
-      - name: Terraform Init Infra (Remote Backend)
+      - name: Terraform Init Backend (Remote)
+        run: terraform -chdir=terraform_backend init -reconfigure
+
+      # ───────────────────────────────
+      # Step 3: Apply any backend changes (optional)
+      # ───────────────────────────────
+      - name: Terraform Apply Backend (Remote)
+        run: terraform -chdir=terraform_backend apply -auto-approve
+
+      # ───────────────────────────────
+      # Step 4: Apply infrastructure pointing to remote backend
+      # ───────────────────────────────
+      - name: Terraform Init Infra
         run: terraform -chdir=terraform_infra init -reconfigure
 
-      # Optional formatting and validation
       - name: Terraform Format Infra
         run: terraform -chdir=terraform_infra fmt
 
       - name: Terraform Validate Infra
         run: terraform -chdir=terraform_infra validate
 
-      # Plan and apply infra
       - name: Terraform Plan Infra
         run: terraform -chdir=terraform_infra plan -out=tfplan
 
@@ -63,6 +73,8 @@ jobs:
         if: success()
         run: terraform -chdir=terraform_infra apply -auto-approve tfplan
 
-      # Output EC2 Public IP & RDS endpoint (optional for debugging)
+      # ───────────────────────────────
+      # Step 5: Output EC2 Public IP & RDS Endpoint
+      # ───────────────────────────────
       - name: Terraform Outputs
         run: terraform -chdir=terraform_infra output
