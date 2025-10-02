@@ -11,15 +11,15 @@ terraform {
   }
 }
 
-
-# VPC
+# ───────────────
+# VPC and Subnets
+# ───────────────
 resource "aws_vpc" "demo_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   tags = { Name = "demo-vpc" }
 }
 
-# Subnets
 resource "aws_subnet" "demo_public_subnet" {
   vpc_id                  = aws_vpc.demo_vpc.id
   cidr_block              = "10.0.1.0/24"
@@ -48,7 +48,7 @@ resource "aws_internet_gateway" "demo_igw" {
   tags   = { Name = "demo-igw" }
 }
 
-# Route Table
+# Public Route Table
 resource "aws_route_table" "demo_public_rt" {
   vpc_id = aws_vpc.demo_vpc.id
 
@@ -65,44 +65,71 @@ resource "aws_route_table_association" "demo_public_assoc" {
   route_table_id = aws_route_table.demo_public_rt.id
 }
 
-# Security Groups
+# ───────────────
+# SSH Key Pair
+# ───────────────
+resource "tls_private_key" "deployer" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+resource "aws_key_pair" "deployer" {
+  key_name   = "deployer-key"
+  public_key = tls_private_key.deployer.public_key_openssh
+}
+
+resource "local_file" "private_key" {
+  content         = tls_private_key.deployer.private_key_pem
+  filename        = "key/deployer.pem"
+  file_permission = "0400"
+}
+
+# ───────────────
+# Security Group for EC2 (SSH + HTTP + HTTPS + Docker ports)
+# ───────────────
 resource "aws_security_group" "ec2_sg" {
   name        = "ec2-sg-demo"
-  description = "Allow SSH and HTTP"
+  description = "Allow SSH, HTTP, HTTPS, Frontend, Backend"
   vpc_id      = aws_vpc.demo_vpc.id
 
   ingress {
+    description = "SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["208.127.30.55/32"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
+    description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+  ingress {
+    description = "HTTPS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-}
-
-resource "aws_security_group" "rds_sg" {
-  name        = "rds-sg-demo"
-  description = "Allow MySQL from EC2"
-  vpc_id      = aws_vpc.demo_vpc.id
 
   ingress {
-    from_port       = 3306
-    to_port         = 3306
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ec2_sg.id]
+    description = "Frontend app"
+    from_port   = 5000
+    to_port     = 5000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Backend app"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -113,15 +140,17 @@ resource "aws_security_group" "rds_sg" {
   }
 }
 
-# IAM Role and Instance Profile
+# ───────────────
+# IAM Role & Instance Profile
+# ───────────────
 resource "aws_iam_role" "ec2_role" {
   name = "ec2-s3-role-demo1"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Action    = "sts:AssumeRole",
-      Effect    = "Allow",
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "ec2.amazonaws.com" }
     }]
   })
@@ -138,18 +167,24 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_role.name
 }
 
+# ───────────────
 # EC2 Instance
+# ───────────────
 resource "aws_instance" "demo" {
-  ami                    = "ami-08982f1c5bf93d976"
-  instance_type          = "t3.micro"
-  subnet_id              = aws_subnet.demo_public_subnet.id
-  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
+  ami                         = "ami-08982f1c5bf93d976"
+  instance_type               = "t3.micro"
+  subnet_id                   = aws_subnet.demo_public_subnet.id
+  vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
+  key_name                     = aws_key_pair.deployer.key_name
+  associate_public_ip_address = true
+  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
 
   tags = { Name = "Tf-Demo-EC2" }
 }
 
-# RDS Subnet Group and Instance
+# ───────────────
+# RDS Subnet Group & Instance
+# ───────────────
 resource "aws_db_subnet_group" "rds_subnet" {
   name       = "rds-subnet-group-demo11"
   subnet_ids = [
@@ -168,13 +203,16 @@ resource "aws_db_instance" "mydb" {
   username               = "admin"
   password               = "Admin12345!"
   db_subnet_group_name   = aws_db_subnet_group.rds_subnet.name
-  vpc_security_group_ids = [aws_security_group.rds_sg.id]
+  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
   skip_final_snapshot    = true
 }
 
+# ───────────────
 # Outputs
+# ───────────────
 output "ec2_public_ip" {
-  value = aws_instance.demo.public_ip
+  description = "Public IP of EC2 instance"
+  value       = aws_instance.demo.public_ip
 }
 
 output "rds_endpoint" {
