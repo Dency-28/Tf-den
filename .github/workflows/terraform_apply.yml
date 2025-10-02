@@ -7,64 +7,62 @@ on:
   workflow_dispatch:
 
 jobs:
-  bootstrap-backend:
-    name: Bootstrap Terraform Backend
+  terraform:
+    name: Terraform Deployment
     runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: us-east-1
+
     steps:
+      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      # 2. Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.6.6
 
-      - name: Configure AWS credentials
+      # 3. Configure AWS credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Initialize Terraform (local state)
+      # ───────────────────────────────
+      # Step 1: Create backend resources (S3 + DynamoDB) using local state
+      # ───────────────────────────────
+      - name: Terraform Init Backend (Local State)
         run: terraform -chdir=terraform_backend init -backend=false
 
-      - name: Apply Terraform Backend (create S3 + DynamoDB)
+      - name: Terraform Apply Backend (Local State)
         run: terraform -chdir=terraform_backend apply -auto-approve
 
-  terraform-infra:
-    name: Deploy Terraform Infrastructure
-    runs-on: ubuntu-latest
-    needs: bootstrap-backend
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.6.6
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      # Now the S3 bucket exists, we can safely init the backend
-      - name: Terraform Init (Infra)
+      # ───────────────────────────────
+      # Step 2: Initialize infra with remote backend (S3 bucket now exists)
+      # ───────────────────────────────
+      - name: Terraform Init Infra (Remote Backend)
         run: terraform -chdir=terraform_infra init -reconfigure
 
-      - name: Terraform Format (Infra)
+      # Optional formatting and validation
+      - name: Terraform Format Infra
         run: terraform -chdir=terraform_infra fmt
 
-      - name: Terraform Validate (Infra)
+      - name: Terraform Validate Infra
         run: terraform -chdir=terraform_infra validate
 
-      - name: Terraform Plan (Infra)
+      # Plan and apply infra
+      - name: Terraform Plan Infra
         run: terraform -chdir=terraform_infra plan -out=tfplan
 
-      - name: Terraform Apply (Infra)
+      - name: Terraform Apply Infra
+        if: success()
         run: terraform -chdir=terraform_infra apply -auto-approve tfplan
+
+      # Output EC2 Public IP & RDS endpoint (optional for debugging)
+      - name: Terraform Outputs
+        run: terraform -chdir=terraform_infra output
