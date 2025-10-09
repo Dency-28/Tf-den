@@ -1,17 +1,6 @@
-﻿# Terraform files to ignore
-.terraform/
-*.tfstate
-*.tfstate.*
-crash.log
-*.tfvars
-*.terraform.lock.hcl
-# Ignore plan files
-*.tfplan
-
-# Ignore override files
-override.tf
-override.tf.json
-
-# Ignore CLI configuration
-terraform.rc
-.terraformrc
+﻿# Except these folders
+!terraform_backend/
+!terraform_infra/
+!.github/
+LICENSE.txt
+terraform
