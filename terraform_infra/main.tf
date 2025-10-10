@@ -66,26 +66,7 @@ resource "aws_route_table_association" "demo_public_assoc" {
 }
 
 # ───────────────
-# SSH Key Pair
-# ───────────────
-resource "tls_private_key" "deployer" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-resource "aws_key_pair" "deployer" {
-  key_name   = "deployer-key"
-  public_key = tls_private_key.deployer.public_key_openssh
-}
-
-resource "local_file" "private_key" {
-  content         = tls_private_key.deployer.private_key_pem
-  filename        = "key/deployer.pem"
-  file_permission = "0400"
-}
-
-# ───────────────
-# Security Group for EC2 (SSH + HTTP + HTTPS + Docker ports)
+# Security Group for EC2
 # ───────────────
 resource "aws_security_group" "ec2_sg" {
   name        = "ec2-sg-demo"
@@ -128,6 +109,30 @@ resource "aws_security_group" "ec2_sg" {
     description = "Backend app"
     from_port   = 8080
     to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  
+  ingress {
+    description = "Node exporter"
+    from_port   = 9100
+    to_port     = 9100
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Prometheus"
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Grafana"
+    from_port   = 3000
+    to_port     = 3000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -175,7 +180,7 @@ resource "aws_instance" "demo" {
   instance_type               = "t3.micro"
   subnet_id                   = aws_subnet.demo_public_subnet.id
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
-  key_name                     = aws_key_pair.deployer.key_name
+  key_name                    = "deployer_new"  # ✅ updated to use your manually created key
   associate_public_ip_address = true
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
 
