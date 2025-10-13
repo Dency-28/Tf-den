@@ -38,8 +38,8 @@ jobs:
       - name: Check if resources exist
         id: check
         run: |
-          terraform -chdir=terraform_infra state list || echo "empty" > state_status.txt
-          if grep -q "empty" state_status.txt; then
+          terraform -chdir=terraform_infra state list > state_list.txt || true
+          if [ ! -s state_list.txt ]; then
             echo "status=empty" >> $GITHUB_OUTPUT
           else
             echo "status=has_resources" >> $GITHUB_OUTPUT
@@ -55,7 +55,7 @@ jobs:
         if: steps.check.outputs.status == 'empty'
         run: echo "✅ Nothing to destroy. Resources already deleted."
 
-      # Step 8️⃣: Cleanup confirmation
+      # Step 8️⃣: Verify cleanup
       - name: Verify Cleanup
         run: |
           echo "🧹 Checking state after destroy..."
