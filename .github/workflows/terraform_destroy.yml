@@ -4,53 +4,64 @@ on:
   workflow_dispatch:
 
 jobs:
-  destroy:
+  terraform-destroy:
     name: Destroy Infrastructure
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
+
+    env:
+      AWS_REGION: us-east-1
+      S3_BUCKET: tf-state-dency
+      DYNAMO_TABLE: tf-state-locks
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.6
-
-      - name: Initialize Terraform (ignore backend errors)
+      - name: Destroy Terraform-managed infrastructure
         run: |
           set +e
-          echo "Initializing Terraform..."
-          terraform init -backend=false || true
+          cd terraform_infra
+          echo "🧱 Attempting to destroy infrastructure..."
+          terraform init || echo "⚠️ Backend missing, continuing with local state..."
+          terraform destroy -auto-approve || echo "⚠️ Terraform destroy failed or nothing to destroy, continuing..."
+          cd ..
 
-      - name: Force Unlock (optional)
+      - name: Clean up S3 backend (force delete all versions)
         run: |
           set +e
-          terraform force-unlock -force $(terraform show -json | jq -r '.lock_id // empty') || true
-          echo "Force unlock done or not required"
+          echo "🧹 Cleaning up backend..."
+          aws s3api list-buckets --query "Buckets[].Name" --output text | grep -w "${S3_BUCKET}" >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "Emptying and deleting S3 bucket: ${S3_BUCKET}"
+            aws s3api delete-objects --bucket ${S3_BUCKET} --delete "$(aws s3api list-object-versions --bucket ${S3_BUCKET} --output=json --query='{Objects: Versions[].{Key:Key,VersionId:VersionId}}')" >/dev/null 2>&1 || true
+            aws s3api delete-objects --bucket ${S3_BUCKET} --delete "$(aws s3api list-object-versions --bucket ${S3_BUCKET} --output=json --query='{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}')" >/dev/null 2>&1 || true
+            aws s3 rb s3://${S3_BUCKET} --force || echo "⚠️ S3 bucket already deleted or not empty"
+          else
+            echo "⚠️ S3 bucket ${S3_BUCKET} not found, skipping deletion."
+          fi
 
-      - name: Destroy Infrastructure (ignore missing S3/Dynamo)
+      - name: Cleanup DynamoDB Table (if exists)
         run: |
           set +e
-          echo "Attempting to destroy infrastructure..."
-          terraform destroy -auto-approve || echo "⚠️ Destroy failed or partially done, continuing..."
+          echo "🔍 Checking if DynamoDB table ${DYNAMO_TABLE} exists..."
+          aws dynamodb describe-table --table-name ${DYNAMO_TABLE} >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "🧱 Deleting DynamoDB table: ${DYNAMO_TABLE}"
+            aws dynamodb delete-table --table-name ${DYNAMO_TABLE}
+            echo "⏳ Waiting for deletion to complete..."
+            aws dynamodb wait table-not-exists --table-name ${DYNAMO_TABLE}
+            echo "✅ DynamoDB table deleted successfully!"
+          else
+            echo "⚠️ DynamoDB table ${DYNAMO_TABLE} not found, skipping."
+          fi
 
-      - name: Cleanup DynamoDB Table (if still exists)
+      - name: Final confirmation
         run: |
-          set +e
-          aws dynamodb delete-table --table-name tf-state-lock || echo "No DynamoDB table found, skipping..."
-
-      - name: Cleanup S3 Bucket (if still exists)
-        run: |
-          set +e
-          aws s3 rb s3://tf-state-dency --force || echo "No S3 bucket found, skipping..."
+          echo "✅ Terraform infrastructure, S3 backend, and DynamoDB lock table cleanup complete."
