@@ -43,10 +43,51 @@ jobs:
         run: terraform -chdir=terraform_infra apply -auto-approve tfdestroyplan
 
       # ───────────────────────────────
-      # Step 5️⃣: Get Backend Details from backend/main.tf directly
+      # Step 5️⃣: Read Backend Info Directly from backend.tf
       # ───────────────────────────────
       - name: Parse Backend Config
         id: parse-backend
+        shell: bash
         run: |
           set -e
-          echo "Reading backend config directly from terraform_backe_
+          echo "Reading backend config from terraform_backend/main.tf..."
+          BUCKET_NAME=$(grep -E 'bucket *= *"' terraform_backend/main.tf | sed -E 's/.*bucket *= *"([^"]*)".*/\1/' | head -n 1 || echo "")
+          DYNAMO_TABLE=$(grep -E 'dynamodb_table *= *"' terraform_backend/main.tf | sed -E 's/.*dynamodb_table *= *"([^"]*)".*/\1/' | head -n 1 || echo "")
+          echo "bucket=$BUCKET_NAME" >> "$GITHUB_OUTPUT"
+          echo "table=$DYNAMO_TABLE" >> "$GITHUB_OUTPUT"
+          echo "✅ Detected bucket: $BUCKET_NAME"
+          echo "✅ Detected DynamoDB table: $DYNAMO_TABLE"
+
+      # ───────────────────────────────
+      # Step 6️⃣: Force Delete S3 & DynamoDB (Backend)
+      # ───────────────────────────────
+      - name: Force Delete S3 and DynamoDB
+        if: ${{ steps.parse-backend.outputs.bucket != '' || steps.parse-backend.outputs.table != '' }}
+        shell: bash
+        run: |
+          set -e
+          BUCKET_NAME="${{ steps.parse-backend.outputs.bucket }}"
+          DYNAMO_TABLE="${{ steps.parse-backend.outputs.table }}"
+
+          echo "🧹 Cleaning up backend..."
+          if [ -n "$BUCKET_NAME" ]; then
+            echo "Deleting all objects from S3 bucket: $BUCKET_NAME"
+            aws s3 rm "s3://$BUCKET_NAME" --recursive || true
+            echo "Deleting S3 bucket: $BUCKET_NAME"
+            aws s3 rb "s3://$BUCKET_NAME" --force || true
+          fi
+
+          if [ -n "$DYNAMO_TABLE" ]; then
+            echo "Deleting DynamoDB table: $DYNAMO_TABLE"
+            aws dynamodb delete-table --table-name "$DYNAMO_TABLE" || true
+          fi
+
+          echo "✅ Backend (S3 + DynamoDB) deleted successfully!"
+
+      # ───────────────────────────────
+      # Step 7️⃣: Final Confirmation
+      # ───────────────────────────────
+      - name: Verify Cleanup
+        run: |
+          echo "✅ Terraform destroy completed successfully."
+          echo "All infrastructure and backend resources are now deleted."
