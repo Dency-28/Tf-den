@@ -1,4 +1,4 @@
-name: 🧹 Terraform Destroy
+name: Terraform Destroy
 
 on:
   workflow_dispatch:
@@ -42,26 +42,26 @@ jobs:
         run: |
           set -e
 
-          # --- Read backend resource names (manually specify or detect) ---
+          # --- Correct backend names ---
           BUCKET_NAME="tf-state-dency"
-          DYNAMO_TABLE="tf-lock-dency"
+          DYNAMO_TABLE="tf-state-locks"
 
           echo "🧹 Cleaning up backend resources..."
           echo "----------------------------------"
 
-          # --- Delete ALL object versions (if bucket versioning enabled) ---
+          # --- Delete all object versions ---
           echo "🔹 Deleting all object versions from S3 bucket: $BUCKET_NAME"
           aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json \
             --query '{Objects: Versions[].{Key: Key, VersionId: VersionId}}' > versions.json || echo '{"Objects": []}' > versions.json
           aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file://versions.json || true
 
-          # --- Delete ALL delete markers ---
+          # --- Delete delete markers ---
           echo "🔹 Deleting all delete markers from S3 bucket: $BUCKET_NAME"
           aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json \
             --query '{Objects: DeleteMarkers[].{Key: Key, VersionId: VersionId}}' > delete-markers.json || echo '{"Objects": []}' > delete-markers.json
           aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file://delete-markers.json || true
 
-          # --- Double-check if any remaining objects ---
+          # --- Double-check bucket empty ---
           echo "🔹 Final emptying of S3 bucket..."
           aws s3 rm s3://$BUCKET_NAME --recursive || true
 
