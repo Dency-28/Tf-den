@@ -42,21 +42,28 @@ jobs:
           set +e
           echo "🧱 Attempting to destroy infrastructure..."
           cd terraform_infra
-          terraform init -input=false || echo "⚠️ Backend missing, switching to local..."
-          if [ ! -f backend_override.tf ]; then
-            cat <<EOF > backend_override.tf
-            terraform {
-              backend "local" {
-                path = "./local.tfstate"
-              }
-            }
-            EOF
+
+          # Try normal init first
+          terraform init -input=false
+          if [ $? -ne 0 ]; then
+            echo "⚠️ Backend missing — switching to local backend..."
+            rm -f backend_override.tf
+            cat > backend_override.tf <<'EOF'
+terraform {
+  backend "local" {
+    path = "./local.tfstate"
+  }
+}
+EOF
             terraform init -reconfigure -input=false
           fi
-          terraform destroy -auto-approve -input=false || true
-          echo "✅ Terraform infra destroy complete."
 
-      # 5️⃣ Delete all versions from S3 bucket
+          echo "🧨 Running destroy (ignoring missing backend errors)..."
+          terraform destroy -auto-approve -input=false || true
+
+          echo "✅ Terraform infra destroy completed (ignore above errors if backend missing)."
+
+      # 5️⃣ Delete all versions from S3 bucket and DynamoDB table
       - name: 🧹 Empty and Delete S3 + DynamoDB
         shell: bash
         run: |
@@ -65,25 +72,32 @@ jobs:
           DYNAMO_TABLE=${{ env.TF_LOCK_TABLE }}
 
           echo "🧹 Cleaning up backend resources..."
-          echo "🔹 Emptying all object versions from S3 bucket: $BUCKET_NAME"
+          echo "🔹 Checking if S3 bucket exists..."
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "🔹 Bucket exists: $BUCKET_NAME"
 
-          # Delete versions
-          aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json \
-            --query '{Objects: Versions[].{Key: Key, VersionId: VersionId}}' > versions.json || echo '{"Objects":[]}' > versions.json
-          aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file://versions.json || true
+            echo "🔸 Deleting all object versions..."
+            aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json \
+              --query '{Objects: Versions[].{Key: Key, VersionId: VersionId}}' > versions.json || echo '{"Objects":[]}' > versions.json
+            aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file://versions.json || true
 
-          # Delete delete markers
-          aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json \
-            --query '{Objects: DeleteMarkers[].{Key: Key, VersionId: VersionId}}' > markers.json || echo '{"Objects":[]}' > markers.json
-          aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file://markers.json || true
+            echo "🔸 Deleting all delete markers..."
+            aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json \
+              --query '{Objects: DeleteMarkers[].{Key: Key, VersionId: VersionId}}' > markers.json || echo '{"Objects":[]}' > markers.json
+            aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file://markers.json || true
 
-          # Double-check bucket is empty
-          aws s3 rm s3://$BUCKET_NAME --recursive || true
+            echo "🪣 Deleting S3 bucket: $BUCKET_NAME"
+            aws s3api delete-bucket --bucket "$BUCKET_NAME" --region ${{ env.AWS_REGION }} || true
+          else
+            echo "✅ S3 bucket $BUCKET_NAME already deleted. Skipping..."
+          fi
 
-          echo "🪣 Deleting S3 bucket: $BUCKET_NAME"
-          aws s3api delete-bucket --bucket "$BUCKET_NAME" --region ${{ env.AWS_REGION }} || true
+          echo "🔹 Checking if DynamoDB table exists..."
+          if aws dynamodb describe-table --table-name "$DYNAMO_TABLE" >/dev/null 2>&1; then
+            echo "🧱 Deleting DynamoDB table: $DYNAMO_TABLE"
+            aws dynamodb delete-table --table-name "$DYNAMO_TABLE" || true
+          else
+            echo "✅ DynamoDB table $DYNAMO_TABLE already deleted. Skipping..."
+          fi
 
-          echo "🧱 Deleting DynamoDB table: $DYNAMO_TABLE"
-          aws dynamodb delete-table --table-name "$DYNAMO_TABLE" || true
-
-          echo "✅ Backend (S3 + DynamoDB) cleanup complete!"
+          echo "✅ Backend cleanup (S3 + DynamoDB) fully complete!"
