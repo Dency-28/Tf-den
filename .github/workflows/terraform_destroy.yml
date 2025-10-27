@@ -43,16 +43,17 @@ jobs:
         run: terraform -chdir=terraform_infra apply -auto-approve tfdestroyplan
 
       # ───────────────────────────────
-      # Step 5️⃣: Read Backend Info Directly from backend.tf
+      # Step 5️⃣: Parse Backend Info from backend_setup.tf
       # ───────────────────────────────
       - name: Parse Backend Config
         id: parse-backend
         shell: bash
         run: |
           set -e
-          echo "Reading backend config from terraform_backend/main.tf..."
-          BUCKET_NAME=$(grep -E 'bucket *= *"' terraform_backend/main.tf | sed -E 's/.*bucket *= *"([^"]*)".*/\1/' | head -n 1 || echo "")
-          DYNAMO_TABLE=$(grep -E 'dynamodb_table *= *"' terraform_backend/main.tf | sed -E 's/.*dynamodb_table *= *"([^"]*)".*/\1/' | head -n 1 || echo "")
+          echo "Reading backend config from terraform_backend/backend_setup.tf..."
+          FILE="terraform_backend/backend_setup.tf"
+          BUCKET_NAME=$(grep -E 'bucket *= *"' "$FILE" | sed -E 's/.*bucket *= *"([^"]*)".*/\1/' | head -n 1 || echo "")
+          DYNAMO_TABLE=$(grep -E 'dynamodb_table *= *"' "$FILE" | sed -E 's/.*dynamodb_table *= *"([^"]*)".*/\1/' | head -n 1 || echo "")
           echo "bucket=$BUCKET_NAME" >> "$GITHUB_OUTPUT"
           echo "table=$DYNAMO_TABLE" >> "$GITHUB_OUTPUT"
           echo "✅ Detected bucket: $BUCKET_NAME"
