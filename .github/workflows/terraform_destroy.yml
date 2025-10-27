@@ -18,7 +18,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # 2️⃣ Configure AWS
+      # 2️⃣ Setup Terraform CLI
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.6
+
+      # 3️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -26,20 +32,19 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Destroy Infra (auto fallback if backend missing)
+      # 4️⃣ Destroy Terraform-managed infrastructure
       - name: Destroy Terraform-managed infrastructure
         run: |
           set +e
           cd terraform_infra
           echo "🧱 Initializing Terraform for destroy..."
-          
+
           terraform init -reconfigure -input=false || echo "⚠️ Backend missing, switching to local state..."
 
-          # If backend init fails, reconfigure local backend
           if [ $? -ne 0 ]; then
             echo "🔁 Reconfiguring Terraform to use local state..."
             rm -rf .terraform
-            cat > backend_override.tf <<EOF
+            cat > backend_override.tf <<'EOF'
             terraform {
               backend "local" {
                 path = "terraform.tfstate"
@@ -53,13 +58,13 @@ jobs:
           terraform destroy -auto-approve || echo "⚠️ Nothing to destroy or partial state, continuing..."
           cd ..
 
-      # 4️⃣ Wait briefly for AWS resource release
+      # 5️⃣ Wait briefly for AWS resource release
       - name: Wait before backend cleanup
         run: |
           echo "⏳ Waiting for resources to fully terminate..."
           sleep 20
 
-      # 5️⃣ Delete S3 backend safely (handles missing case too)
+      # 6️⃣ Delete S3 backend safely
       - name: Clean up S3 backend
         run: |
           set +e
@@ -80,7 +85,7 @@ jobs:
             echo "⚠️ S3 bucket ${S3_BUCKET} not found, skipping."
           fi
 
-      # 6️⃣ Delete DynamoDB table (if still exists)
+      # 7️⃣ Delete DynamoDB table (if still exists)
       - name: Delete DynamoDB table
         run: |
           set +e
@@ -95,7 +100,7 @@ jobs:
             echo "⚠️ DynamoDB table ${DYNAMO_TABLE} not found, skipping."
           fi
 
-      # 7️⃣ Final confirmation
+      # 8️⃣ Final confirmation
       - name: Final confirmation
         run: |
           echo "✅ All Terraform infra, S3 backend, and DynamoDB table destroyed successfully!"
