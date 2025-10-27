@@ -2,8 +2,14 @@ name: Terraform CI/CD
 
 on:
   push:
-    branches: 
+    branches:
       - main
+    paths:
+      # Run apply only when Terraform code changes
+      - 'terraform_backend/**'
+      - 'terraform_infra/**'
+      # Ignore any workflow YAML file changes
+      - '!**/.github/workflows/**'
   workflow_dispatch:
 
 jobs:
