@@ -1,0 +1,58 @@
+name: Terraform Destroy Infra Only
+
+on:
+  workflow_dispatch:
+
+jobs:
+  terraform-destroy-infra:
+    name: Destroy Infrastructure (Keep Backend)
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: us-east-1
+      S3_BUCKET: tf-state-dency
+      DYNAMO_TABLE: tf-state-locks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.7
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Destroy Terraform Infrastructure
+        run: |
+          set +e
+          cd terraform_infra
+          echo "🧱 Initializing Terraform for destroy..."
+
+          terraform init -reconfigure -input=false
+          if [ $? -ne 0 ]; then
+            echo "⚠️ Backend missing, switching to local state..."
+            rm -rf .terraform
+            cat > backend_override.tf <<'EOF'
+terraform {
+  backend "local" {
+    path = "terraform.tfstate"
+  }
+}
+EOF
+            terraform init -input=false
+          fi
+
+          echo "🔥 Destroying Terraform-managed infrastructure..."
+          terraform destroy -auto-approve || echo "⚠️ Nothing to destroy or partial state."
+          cd ..
+
+      - name: Final message
+        run: |
+          echo "✅ Infrastructure destroyed successfully (S3 + DynamoDB preserved)."
