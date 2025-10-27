@@ -30,6 +30,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Destroy Terraform Infrastructure
+        shell: bash
         run: |
           set +e
           cd terraform_infra
@@ -39,13 +40,15 @@ jobs:
           if [ $? -ne 0 ]; then
             echo "⚠️ Backend missing, switching to local state..."
             rm -rf .terraform
-            cat > backend_override.tf <<'EOF'
+
+cat > backend_override.tf <<'EOF'
 terraform {
   backend "local" {
     path = "terraform.tfstate"
   }
 }
 EOF
+
             terraform init -input=false
           fi
 
@@ -54,5 +57,4 @@ EOF
           cd ..
 
       - name: Final message
-        run: |
-          echo "✅ Infrastructure destroyed successfully (S3 + DynamoDB preserved)."
+        run: echo "✅ Infrastructure destroyed successfully (S3 + DynamoDB preserved)."
