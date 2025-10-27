@@ -1,11 +1,11 @@
-name: 🧱 Terraform Infra Destroy
+name: Terraform Infra Destroy
 
 on:
   workflow_dispatch:
 
 jobs:
-  terraform-destroy-infra:
-    name: Destroy Infrastructure (Keep Backend)
+  destroy:
+    name: Destroy Terraform Infrastructure
     runs-on: ubuntu-latest
 
     env:
@@ -14,47 +14,28 @@ jobs:
       DYNAMO_TABLE: tf-state-locks
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.5.7
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Destroy Terraform Infrastructure
-        shell: bash
-        run: |
-          set +e
-          cd terraform_infra
-          echo "🧱 Initializing Terraform for destroy..."
+      - name: Terraform Init
+        working-directory: terraform_infra
+        run: terraform init -input=false -reconfigure
 
-          terraform init -reconfigure -input=false
-          if [ $? -ne 0 ]; then
-            echo "⚠️ Backend missing, switching to local state..."
-            rm -rf .terraform
+      - name: Terraform Destroy
+        working-directory: terraform_infra
+        run: terraform destroy -auto-approve
 
-cat > backend_override.tf <<'EOF'
-terraform {
-  backend "local" {
-    path = "terraform.tfstate"
-  }
-}
-EOF
-
-            terraform init -input=false
-          fi
-
-          echo "🔥 Destroying Terraform-managed infrastructure..."
-          terraform destroy -auto-approve || echo "⚠️ Nothing to destroy or partial state."
-          cd ..
-
-      - name: Final message
-        run: echo "✅ Infrastructure destroyed successfully (S3 + DynamoDB preserved)."
+      - name: Destroy Complete
+        run: echo "✅ Infrastructure destroy completed successfully."
