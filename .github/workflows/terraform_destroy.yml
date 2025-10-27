@@ -1,53 +1,47 @@
-name: 🧹 Terraform Destroy (Full Cleanup)
+name: "🧹 Terraform Destroy (Full Cleanup)"
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - destroy
 
 permissions:
   contents: read
 
 jobs:
   terraform-destroy:
-    name: Terraform Full Destroy
     runs-on: ubuntu-latest
-
     env:
       AWS_REGION: us-east-1
       TF_BUCKET_NAME: tf-state-dency
       TF_LOCK_TABLE: tf-state-locks
 
     steps:
-      # 1️⃣ Checkout repo
-      - name: 📦 Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Terraform
-      - name: ⚙️ Setup Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.0
 
-      # 3️⃣ Configure AWS credentials
-      - name: 🔐 Configure AWS Credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 4️⃣ Try destroying infra (ignore backend missing errors)
-      - name: 💣 Destroy Terraform Infra
+      - name: Destroy Terraform Infrastructure (safe)
         shell: bash
         run: |
           set +e
           echo "🧱 Attempting to destroy infrastructure..."
           cd terraform_infra
-
-          # Try normal init first
           terraform init -input=false
           if [ $? -ne 0 ]; then
-            echo "⚠️ Backend missing — switching to local backend..."
-            rm -f backend_override.tf
+            echo "⚠️ Backend missing, switching to local backend..."
             cat > backend_override.tf <<'EOF'
 terraform {
   backend "local" {
@@ -57,47 +51,39 @@ terraform {
 EOF
             terraform init -reconfigure -input=false
           fi
-
-          echo "🧨 Running destroy (ignoring missing backend errors)..."
           terraform destroy -auto-approve -input=false || true
+          echo "✅ Terraform infra destroy complete."
 
-          echo "✅ Terraform infra destroy completed (ignore above errors if backend missing)."
-
-      # 5️⃣ Delete all versions from S3 bucket and DynamoDB table
-      - name: 🧹 Empty and Delete S3 + DynamoDB
+      - name: Cleanup S3 & DynamoDB
         shell: bash
         run: |
           set -e
           BUCKET_NAME=${{ env.TF_BUCKET_NAME }}
           DYNAMO_TABLE=${{ env.TF_LOCK_TABLE }}
 
-          echo "🧹 Cleaning up backend resources..."
-          echo "🔹 Checking if S3 bucket exists..."
           if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-            echo "🔹 Bucket exists: $BUCKET_NAME"
-
-            echo "🔸 Deleting all object versions..."
-            aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json \
-              --query '{Objects: Versions[].{Key: Key, VersionId: VersionId}}' > versions.json || echo '{"Objects":[]}' > versions.json
+            echo "Deleting S3 bucket $BUCKET_NAME..."
+            aws s3api list-object-versions --bucket "$BUCKET_NAME" \
+              --query '{Objects: Versions[].{Key: Key, VersionId: VersionId}}' \
+              --output json > versions.json || echo '{"Objects":[]}' > versions.json
             aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file://versions.json || true
 
-            echo "🔸 Deleting all delete markers..."
-            aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json \
-              --query '{Objects: DeleteMarkers[].{Key: Key, VersionId: VersionId}}' > markers.json || echo '{"Objects":[]}' > markers.json
+            aws s3api list-object-versions --bucket "$BUCKET_NAME" \
+              --query '{Objects: DeleteMarkers[].{Key: Key, VersionId: VersionId}}' \
+              --output json > markers.json || echo '{"Objects":[]}' > markers.json
             aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file://markers.json || true
 
-            echo "🪣 Deleting S3 bucket: $BUCKET_NAME"
-            aws s3api delete-bucket --bucket "$BUCKET_NAME" --region ${{ env.AWS_REGION }} || true
+            aws s3 rm "s3://$BUCKET_NAME" --recursive || true
+            aws s3api delete-bucket --bucket "$BUCKET_NAME" --region "$AWS_REGION" || true
           else
-            echo "✅ S3 bucket $BUCKET_NAME already deleted. Skipping..."
+            echo "⚠️ S3 bucket $BUCKET_NAME not found, skipping."
           fi
 
-          echo "🔹 Checking if DynamoDB table exists..."
           if aws dynamodb describe-table --table-name "$DYNAMO_TABLE" >/dev/null 2>&1; then
-            echo "🧱 Deleting DynamoDB table: $DYNAMO_TABLE"
+            echo "Deleting DynamoDB table $DYNAMO_TABLE..."
             aws dynamodb delete-table --table-name "$DYNAMO_TABLE" || true
           else
-            echo "✅ DynamoDB table $DYNAMO_TABLE already deleted. Skipping..."
+            echo "⚠️ DynamoDB table $DYNAMO_TABLE not found, skipping."
           fi
 
-          echo "✅ Backend cleanup (S3 + DynamoDB) fully complete!"
+          echo "✅ Cleanup complete."
