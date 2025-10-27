@@ -1,4 +1,4 @@
-name: Terraform Destroy (Full Cleanup)
+name: 🧹 Terraform Destroy (Full Cleanup)
 
 on:
   workflow_dispatch:
@@ -101,4 +101,3 @@ EOF
           fi
 
           echo "✅ Backend cleanup (S3 + DynamoDB) fully complete!"
-
