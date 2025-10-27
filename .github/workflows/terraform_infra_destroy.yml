@@ -1,4 +1,4 @@
-name: Terraform Destroy Infra Only
+name: 🧱 Terraform Infra Destroy
 
 on:
   workflow_dispatch:
@@ -14,10 +14,10 @@ jobs:
       DYNAMO_TABLE: tf-state-locks
 
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Install Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.7
