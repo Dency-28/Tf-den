@@ -4,7 +4,7 @@ on:
   push:
     branches: [test]
   pull_request:
-    branches: [Terraform_infra]
+    branches: [Terraform Infra]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -111,4 +111,5 @@ jobs:
           header: 🚀 Terraform Apply Output
           path: apply_comment.md
           recreate: true
+
 
