@@ -1,90 +1,62 @@
-name: Terraform CI/CD
+name: Terraform Test Branch CI/CD
 
 on:
   push:
-    branches:
-      - test
-      - main
-    paths:
-      - 'terraform_backend/**'
-      - 'terraform_infra/**'
-      - '!**/.github/workflows/**'
-
+    branches: [ "test" ]
   pull_request:
-    branches:
-      - main
-
-  workflow_dispatch:
+    branches: [ "test" ]
 
 jobs:
   terraform:
-    name: Terraform Pipeline
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       pull-requests: write
-      issues: write
-
-    env:
-      AWS_REGION: us-east-1
-      S3_BUCKET: tf-state-dency
+      id-token: write
 
     steps:
-      # Step 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2️⃣ Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # Step 3️⃣ Configure AWS credentials
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # ───────────────────────────────
-      # 🧱 Step 4: Terraform Backend
-      # ───────────────────────────────
-      - name: Terraform Init (Backend)
-        run: terraform -chdir=terraform_backend init
-
-      - name: Terraform Apply (Backend)
-        run: terraform -chdir=terraform_backend apply -auto-approve
-
-      # ✅ Wait for S3 backend creation
-      - name: Wait for S3 backend to be ready
-        run: |
-          echo "⏳ Waiting until S3 bucket ${S3_BUCKET} is available..."
-          for i in {1..10}; do
-            if aws s3api head-bucket --bucket "${S3_BUCKET}" 2>/dev/null; then
-              echo "✅ S3 bucket ${S3_BUCKET} is ready."
-              exit 0
-            else
-              echo "⌛ Not ready yet... retrying in 10s..."
-              sleep 10
-            fi
-          done
-          echo "❌ S3 bucket ${S3_BUCKET} not found after waiting."
-          exit 1
-
-      # ───────────────────────────────
-      # ☁️ Step 5: Terraform Infra
-      # ───────────────────────────────
       - name: Terraform Init (Infra)
-        run: terraform -chdir=terraform_infra init -reconfigure
+        run: terraform -chdir=terraform_infra init -input=false
 
       - name: Terraform Plan (Infra)
-        run: terraform -chdir=terraform_infra plan -out=tfplan
+        id: plan
+        run: terraform -chdir=terraform_infra plan -no-color -input=false -out=tfplan
 
-      # 💬 Comment plan result on PR
-      - name: Comment plan on PR
+      - name: Save Plan Output
+        id: plan_output
+        run: |
+          echo '```terraform' > plan.txt
+          terraform -chdir=terraform_infra show -no-color tfplan >> plan.txt
+          echo '```' >> plan.txt
+
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('plan.txt', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🧠 **Terraform Plan Result (test branch)**\n\n${body}`
+            });
+
+      - name: Terraform Apply (Infra)
+        if: github.ref == 'refs/heads/test'
+        run: terraform -chdir=terraform_infra apply -auto-approve tfplan
+
+      - name: Comment Apply on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
@@ -94,30 +66,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: "✅ Terraform Plan executed successfully for **test branch**."
+              body: "🚀 **Terraform Apply completed successfully on test branch!**"
             });
-
-      # 🚀 Apply Infra when merged to main
-      - name: Terraform Apply (Infra)
-        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-        run: |
-          echo "🚀 Running Terraform Apply for infra..."
-          terraform -chdir=terraform_infra apply -auto-approve tfplan
-
-      # 💬 Comment on successful apply
-      - name: Comment on successful apply
-        if: github.ref == 'refs/heads/main'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            console.log("✅ Terraform Apply successful — posting comment...");
-            github.rest.issues.createComment({
-              issue_number: context.issue.number ?? 1,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: "🚀 Terraform Apply completed successfully on **main** branch!"
-            });
-
-      - name: Complete
-        run: echo "✅ Terraform pipeline completed successfully!"
