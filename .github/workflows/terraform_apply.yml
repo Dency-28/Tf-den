@@ -1,70 +1,87 @@
-name: Terraform Test Branch CI/CD
+name: Terraform CI/CD (Test Branch)
 
 on:
   push:
-    branches: [ "test" ]
+    branches:
+      - test
   pull_request:
-    branches: [ "test" ]
+    branches:
+      - test
+  workflow_dispatch:
 
 jobs:
   terraform:
+    name: Terraform Plan & Apply (Test)
     runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: us-east-1
+
     permissions:
       contents: read
-      pull-requests: write
-      id-token: write
+      pull-requests: write   # needed to post comments to PR
 
     steps:
+      # Step 1️⃣: Checkout repository
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
+      # Step 2️⃣: Setup Terraform
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.6.6
 
+      # Step 3️⃣: Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ───────────────────────────────
+      # Step 1: Apply terraform_backend
+      # ───────────────────────────────
+      - name: Terraform Init (Backend)
+        run: terraform -chdir=terraform_backend init
+
+      - name: Terraform Apply (Backend)
+        run: terraform -chdir=terraform_backend apply -auto-approve
+
+      # ───────────────────────────────
+      # Step 2: Run terraform_infra plan
+      # ───────────────────────────────
       - name: Terraform Init (Infra)
-        run: terraform -chdir=terraform_infra init -input=false
+        run: terraform -chdir=terraform_infra init -reconfigure
+
+      - name: Terraform Format (Infra)
+        run: terraform -chdir=terraform_infra fmt
+
+      - name: Terraform Validate (Infra)
+        run: terraform -chdir=terraform_infra validate
 
       - name: Terraform Plan (Infra)
         id: plan
-        run: terraform -chdir=terraform_infra plan -no-color -input=false -out=tfplan
+        run: terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan_output.txt
 
-      - name: Save Plan Output
-        id: plan_output
-        run: |
-          echo '```terraform' > plan.txt
-          terraform -chdir=terraform_infra show -no-color tfplan >> plan.txt
-          echo '```' >> plan.txt
-
-      - name: Comment Plan on PR
+      # Step: Post Plan Output to Pull Request
+      - name: Post Terraform Plan to PR
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: marocchino/sticky-pull-request-comment@v2
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const body = fs.readFileSync('plan.txt', 'utf8');
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `🧠 **Terraform Plan Result (test branch)**\n\n${body}`
-            });
+          path: plan_output.txt
 
+      # ───────────────────────────────
+      # Step 3: Terraform Apply
+      # ───────────────────────────────
       - name: Terraform Apply (Infra)
-        if: github.ref == 'refs/heads/test'
-        run: terraform -chdir=terraform_infra apply -auto-approve tfplan
+        if: success()
+        run: terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply_output.txt
 
-      - name: Comment Apply on PR
+      # Step: Post Apply Output to PR
+      - name: Post Terraform Apply to PR
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: marocchino/sticky-pull-request-comment@v2
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: "🚀 **Terraform Apply completed successfully on test branch!**"
-            });
+          path: apply_output.txt
