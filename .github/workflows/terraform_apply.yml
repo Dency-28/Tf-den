@@ -31,14 +31,17 @@ jobs:
       S3_BUCKET: tf-state-dency
 
     steps:
+      # Step 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Step 2️⃣ Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
+      # Step 3️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -47,7 +50,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # ───────────────────────────────
-      # 🧱 Step 1: Terraform Backend
+      # 🧱 Step 4: Terraform Backend
       # ───────────────────────────────
       - name: Terraform Init (Backend)
         run: terraform -chdir=terraform_backend init
@@ -55,6 +58,7 @@ jobs:
       - name: Terraform Apply (Backend)
         run: terraform -chdir=terraform_backend apply -auto-approve
 
+      # ✅ Wait for S3 backend creation
       - name: Wait for S3 backend to be ready
         run: |
           echo "⏳ Waiting until S3 bucket ${S3_BUCKET} is available..."
@@ -71,14 +75,15 @@ jobs:
           exit 1
 
       # ───────────────────────────────
-      # ☁️ Step 2: Terraform Infra
+      # ☁️ Step 5: Terraform Infra
       # ───────────────────────────────
       - name: Terraform Init (Infra)
         run: terraform -chdir=terraform_infra init -reconfigure
 
       - name: Terraform Plan (Infra)
-        run: terraform -chdir=terraform_infra plan -out=tfplan -no-color
+        run: terraform -chdir=terraform_infra plan -out=tfplan
 
+      # 💬 Comment plan result on PR
       - name: Comment plan on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -89,27 +94,26 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: "✅ Terraform Plan executed successfully for **test → main**."
+              body: "✅ Terraform Plan executed successfully for **test branch**."
             });
 
-      # ───────────────────────────────
-      # ✅ Step 3: Apply Infra (on main only)
-      # ───────────────────────────────
+      # 🚀 Apply Infra when merged to main
       - name: Terraform Apply (Infra)
-        if: |
-          github.ref == 'refs/heads/main' ||
-          github.event.ref == 'refs/heads/main' ||
-          (github.event_name == 'push' && contains(github.ref, 'main'))
-        run: terraform -chdir=terraform_infra apply -auto-approve tfplan
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "🚀 Running Terraform Apply for infra..."
+          terraform -chdir=terraform_infra apply -auto-approve tfplan
 
+      # 💬 Comment on successful apply
       - name: Comment on successful apply
         if: github.ref == 'refs/heads/main'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            console.log("✅ Terraform Apply successful — posting comment...");
             github.rest.issues.createComment({
-              issue_number: context.issue.number,
+              issue_number: context.issue.number ?? 1,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: "🚀 Terraform Apply completed successfully on **main** branch!"
