@@ -78,14 +78,18 @@ jobs:
       - name: Terraform Init (Infra)
         run: terraform -chdir=terraform_infra init -reconfigure
 
-      # ✅ Terraform fmt — don’t fail pipeline if format differs
+      # ✅ Terraform fmt — auto-fix & continue (no failure)
       - name: Terraform Format (Infra)
         run: |
           echo "🔍 Checking Terraform formatting..."
-          terraform -chdir=terraform_infra fmt -check -diff || (
-            echo "⚠️ Some files need formatting. Automatically formatting now..."
+          if ! terraform -chdir=terraform_infra fmt -check -diff; then
+            echo "⚠️ Some files need formatting. Fixing automatically..."
             terraform -chdir=terraform_infra fmt -recursive
-          )
+            echo "✅ Formatting corrected. Continuing..."
+          else
+            echo "✅ All Terraform files properly formatted."
+          fi
+        continue-on-error: true
 
       # ✅ Terraform Validate — safer with continue-on-error false
       - name: Terraform Validate (Infra)
