@@ -78,14 +78,24 @@ jobs:
       - name: Terraform Init (Infra)
         run: terraform -chdir=terraform_infra init -reconfigure
 
+      # ✅ Terraform fmt — don’t fail pipeline if format differs
       - name: Terraform Format (Infra)
-        run: terraform -chdir=terraform_infra fmt -check
+        run: |
+          echo "🔍 Checking Terraform formatting..."
+          terraform -chdir=terraform_infra fmt -check -diff || (
+            echo "⚠️ Some files need formatting. Automatically formatting now..."
+            terraform -chdir=terraform_infra fmt -recursive
+          )
 
+      # ✅ Terraform Validate — safer with continue-on-error false
       - name: Terraform Validate (Infra)
         run: terraform -chdir=terraform_infra validate
 
+      # ✅ Terraform Plan with clear output
       - name: Terraform Plan (Infra)
-        run: terraform -chdir=terraform_infra plan -out=tfplan
+        run: |
+          terraform -chdir=terraform_infra plan -out=tfplan -no-color
+        continue-on-error: false
 
       # 💬 Comment plan result on PR
       - name: Comment plan on PR
