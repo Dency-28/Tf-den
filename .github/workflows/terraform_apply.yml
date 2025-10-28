@@ -3,7 +3,7 @@ name: Terraform CI/CD
 on:
   push:
     branches:
-      - test          # Runs when code is pushed to the test branch
+      - test          # Runs when code is pushed to test branch
       - main          # Runs when merged to main
     paths:
       - 'terraform_backend/**'
@@ -33,17 +33,17 @@ jobs:
       AWS_REGION: us-east-1
 
     steps:
-      # Step 1️⃣ Checkout repository
+      # Step 1️⃣: Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # Step 2️⃣ Setup Terraform
+      # Step 2️⃣: Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.6.6
 
-      # Step 3️⃣ Configure AWS credentials
+      # Step 3️⃣: Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -73,31 +73,27 @@ jobs:
       - name: Terraform Validate (Infra)
         run: terraform -chdir=terraform_infra validate
 
-      # Generate a human-readable plan output
       - name: Terraform Plan (Infra)
-        run: terraform -chdir=terraform_infra plan -no-color > plan.txt
+        run: terraform -chdir=terraform_infra plan -out=tfplan
 
-      # Comment full plan output on PR
-      - name: Comment Plan on PR
+      # Optional: Comment Plan result on PR
+      - name: Comment plan on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs = require('fs');
-            const planOutput = fs.readFileSync('plan.txt', 'utf8').substring(0, 65000); // GitHub comment limit
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `🪴 **Terraform Plan Output:**\n\n\`\`\`\n${planOutput}\n\`\`\`\n✅ Plan generated successfully for *test* branch.`
+              body: "🪴 Terraform Plan executed successfully for test branch."
             });
 
       # Apply only when merged to main
       - name: Terraform Apply (Infra)
         if: github.ref == 'refs/heads/main'
-        run: terraform -chdir=terraform_infra apply -auto-approve
+        run: terraform -chdir=terraform_infra apply -auto-approve tfplan
 
-      # Final confirmation
       - name: Complete
         run: echo "✅ Terraform pipeline completed successfully."

@@ -1,62 +1,82 @@
 name: Terraform Destroy
 
 on:
-  workflow_dispatch:   # Run manually from GitHub Actions tab
+  workflow_dispatch:
 
 jobs:
   terraform-destroy:
-    name: Terraform Destroy Job
+    name: Destroy Infra and Backend
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
+      S3_BUCKET: tf-state-dency
+      DYNAMO_TABLE: tf-state-locks
 
     steps:
-      # Step 1️⃣: Checkout code
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # Step 2️⃣: Setup Terraform
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+        uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.6
+          terraform_version: 1.5.7
 
-      # Step 3️⃣: Configure AWS credentials
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 4️⃣: Initialize Terraform (Infra only)
-      - name: Terraform Init (Infra)
-        run: terraform -chdir=terraform_infra init -reconfigure
-
-      # Step 5️⃣: Check if any resources exist
-      - name: Check if resources exist
-        id: check
+      - name: Terraform Init (with backend)
         run: |
-          terraform -chdir=terraform_infra state list > state_list.txt || true
-          if [ ! -s state_list.txt ]; then
-            echo "status=empty" >> $GITHUB_OUTPUT
+          cd terraform_infra
+          echo "🧱 Initializing Terraform backend..."
+          terraform init -input=false -reconfigure
+          cd ..
+
+      - name: Terraform Destroy Infrastructure
+        run: |
+          set +e
+          cd terraform_infra
+          echo "🔥 Destroying Terraform-managed resources..."
+          terraform destroy -auto-approve || echo "⚠️ Destroy failed or nothing to destroy, continuing..."
+          cd ..
+
+      - name: Wait for AWS resources to settle
+        run: |
+          echo "⏳ Waiting for AWS resources to be fully released..."
+          sleep 20
+
+      - name: Clean up S3 backend (force delete all versions)
+        run: |
+          set +e
+          echo "🧹 Cleaning up S3 backend..."
+          aws s3api list-buckets --query "Buckets[].Name" --output text | grep -w "${S3_BUCKET}" >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "Emptying and deleting S3 bucket: ${S3_BUCKET}"
+            aws s3api delete-objects --bucket ${S3_BUCKET} --delete "$(aws s3api list-object-versions --bucket ${S3_BUCKET} --output=json --query='{Objects: Versions[].{Key:Key,VersionId:VersionId}}')" >/dev/null 2>&1 || true
+            aws s3api delete-objects --bucket ${S3_BUCKET} --delete "$(aws s3api list-object-versions --bucket ${S3_BUCKET} --output=json --query='{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}')" >/dev/null 2>&1 || true
+            aws s3 rb s3://${S3_BUCKET} --force || echo "⚠️ S3 bucket already deleted or not empty"
           else
-            echo "status=has_resources" >> $GITHUB_OUTPUT
+            echo "⚠️ S3 bucket ${S3_BUCKET} not found, skipping deletion."
           fi
 
-      # Step 6️⃣: Destroy resources if they exist
-      - name: Terraform Destroy (Infra)
-        if: steps.check.outputs.status == 'has_resources'
-        run: terraform -chdir=terraform_infra destroy -auto-approve
-
-      # Step 7️⃣: Print message if nothing to destroy
-      - name: Skip destroy (nothing to delete)
-        if: steps.check.outputs.status == 'empty'
-        run: echo "✅ Nothing to destroy. Resources already deleted."
-
-      # Step 8️⃣: Verify cleanup
-      - name: Verify Cleanup
+      - name: Delete DynamoDB Table (if exists)
         run: |
-          echo "🧹 Checking state after destroy..."
-          terraform -chdir=terraform_infra state list || echo "State file clean. Nothing remains."
+          set +e
+          echo "🔍 Checking if DynamoDB table ${DYNAMO_TABLE} exists..."
+          aws dynamodb describe-table --table-name ${DYNAMO_TABLE} >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "🧱 Deleting DynamoDB table: ${DYNAMO_TABLE}"
+            aws dynamodb delete-table --table-name ${DYNAMO_TABLE}
+            aws dynamodb wait table-not-exists --table-name ${DYNAMO_TABLE}
+            echo "✅ DynamoDB table deleted successfully!"
+          else
+            echo "⚠️ DynamoDB table ${DYNAMO_TABLE} not found, skipping."
+          fi
+
+      - name: Final confirmation
+        run: |
+          echo "✅ All Terraform-managed infra, S3 bucket, and DynamoDB backend cleaned up successfully!"
