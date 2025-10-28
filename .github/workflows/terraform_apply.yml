@@ -19,20 +19,17 @@ jobs:
 
     permissions:
       contents: read
-      pull-requests: write   # needed to post comments to PR
+      pull-requests: write
 
     steps:
-      # Step 1️⃣: Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # Step 2️⃣: Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.6.6
 
-      # Step 3️⃣: Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -65,17 +62,16 @@ jobs:
         id: plan
         run: terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan_output.txt
 
-      # ✅ Step: Post Plan Output to Pull Request (Updated)
+      # ✅ Post Plan Output (Fixed)
       - name: Post Terraform Plan to PR
-        if: always()
+        if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           header: "🧩 Terraform Plan Output"
           path: plan_output.txt
           recreate: true
-          allow-recreate: true
-          skip-if-empty: true
+          ignore_empty: true
 
       # ───────────────────────────────
       # Step 3: Terraform Apply
@@ -84,14 +80,13 @@ jobs:
         if: success()
         run: terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply_output.txt
 
-      # ✅ Step: Post Apply Output to Pull Request (Updated)
+      # ✅ Post Apply Output (Fixed)
       - name: Post Terraform Apply to PR
-        if: always()
+        if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           header: "🚀 Terraform Apply Output"
           path: apply_output.txt
           recreate: true
-          allow-recreate: true
-          skip-if-empty: true
+          ignore_empty: true
