@@ -21,7 +21,7 @@ jobs:
 
     permissions:
       contents: read
-      pull-requests: write   # Needed for PR comments
+      pull-requests: write
       issues: read
 
     steps:
@@ -43,7 +43,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 4️⃣: Extract PR Number (for push/comment events)
+      # Step 4️⃣: Extract PR Number
       - name: Get PR Number
         id: get_pr
         uses: jwalton/gh-find-current-pr@v1
@@ -74,7 +74,15 @@ jobs:
 
       - name: Terraform Plan (Infra)
         id: plan
-        run: terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan_output.txt
+        run: |
+          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan_output.txt
+          echo '### 🧩 Terraform Plan Result' > plan_comment.md
+          echo '<details><summary>Click to view full plan logs</summary>' >> plan_comment.md
+          echo '' >> plan_comment.md
+          echo '```' >> plan_comment.md
+          cat plan_output.txt >> plan_comment.md
+          echo '```' >> plan_comment.md
+          echo '</details>' >> plan_comment.md
 
       # ───────────────────────────────
       # Step 7: Post Plan Output to PR
@@ -86,7 +94,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.get_pr.outputs.number }}
           header: 🧩 Terraform Plan Output
-          path: plan_output.txt
+          path: plan_comment.md
           recreate: true
           ignore_empty: true
 
@@ -101,7 +109,15 @@ jobs:
             github.event_name == 'workflow_dispatch' ||
             (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
           )
-        run: terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply_output.txt
+        run: |
+          terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply_output.txt
+          echo '### 🚀 Terraform Apply Result' > apply_comment.md
+          echo '<details><summary>Click to view full apply logs</summary>' >> apply_comment.md
+          echo '' >> apply_comment.md
+          echo '```' >> apply_comment.md
+          cat apply_output.txt >> apply_comment.md
+          echo '```' >> apply_comment.md
+          echo '</details>' >> apply_comment.md
 
       # ───────────────────────────────
       # Step 9: Post Apply Output to PR
@@ -113,6 +129,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.get_pr.outputs.number }}
           header: 🚀 Terraform Apply Output
-          path: apply_output.txt
+          path: apply_comment.md
           recreate: true
           ignore_empty: true
