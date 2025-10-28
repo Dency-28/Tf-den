@@ -65,12 +65,17 @@ jobs:
         id: plan
         run: terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan_output.txt
 
-      # Step: Post Plan Output to Pull Request
+      # ✅ Step: Post Plan Output to Pull Request (Updated)
       - name: Post Terraform Plan to PR
-        if: github.event_name == 'pull_request'
+        if: always()
         uses: marocchino/sticky-pull-request-comment@v2
         with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          header: "🧩 Terraform Plan Output"
           path: plan_output.txt
+          recreate: true
+          allow-recreate: true
+          skip-if-empty: true
 
       # ───────────────────────────────
       # Step 3: Terraform Apply
@@ -79,9 +84,14 @@ jobs:
         if: success()
         run: terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply_output.txt
 
-      # Step: Post Apply Output to PR
+      # ✅ Step: Post Apply Output to Pull Request (Updated)
       - name: Post Terraform Apply to PR
-        if: github.event_name == 'pull_request'
+        if: always()
         uses: marocchino/sticky-pull-request-comment@v2
         with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          header: "🚀 Terraform Apply Output"
           path: apply_output.txt
+          recreate: true
+          allow-recreate: true
+          skip-if-empty: true
