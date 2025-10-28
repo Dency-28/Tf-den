@@ -2,11 +2,9 @@ name: Terraform CI/CD (Test Branch)
 
 on:
   push:
-    branches:
-      - test
+    branches: [test]
   pull_request:
-    branches:
-      - test
+    branches: [test]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -16,93 +14,75 @@ jobs:
     name: Terraform Plan & Apply (Test)
     runs-on: ubuntu-latest
 
-    env:
-      AWS_REGION: us-east-1
-
     permissions:
       contents: read
       pull-requests: write
       issues: read
 
-    steps:
-      # Step 1️⃣: Checkout repository
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    env:
+      AWS_REGION: us-east-1
 
-      # Step 2️⃣: Setup Terraform
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+    steps:
+      # Checkout repo
+      - uses: actions/checkout@v4
+
+      # Setup Terraform
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # Step 3️⃣: Configure AWS credentials
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      # Configure AWS credentials
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 4️⃣: Extract PR Number
-      - name: Get PR Number
-        id: get_pr
+      # Get PR number
+      - id: pr
         uses: jwalton/gh-find-current-pr@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ───────────────────────────────
-      # Step 5: Terraform Backend
-      # ───────────────────────────────
-      - name: Terraform Init (Backend)
-        run: terraform -chdir=terraform_backend init
+      # ─── Backend Setup ───
+      - name: Init & Apply Backend
+        run: |
+          terraform -chdir=terraform_backend init -input=false
+          terraform -chdir=terraform_backend apply -auto-approve
 
-      - name: Terraform Apply (Backend)
-        run: terraform -chdir=terraform_backend apply -auto-approve
-
-      # ───────────────────────────────
-      # Step 6: Terraform Infra Plan
-      # ───────────────────────────────
-      - name: Terraform Init (Infra)
-        run: terraform -chdir=terraform_infra init -reconfigure
-
-      - name: Terraform Format (Infra)
-        run: terraform -chdir=terraform_infra fmt
-
-      - name: Terraform Validate (Infra)
-        run: terraform -chdir=terraform_infra validate
-
-      - name: Terraform Plan (Infra)
+      # ─── Infra Plan ───
+      - name: Terraform Plan
         id: plan
         run: |
-          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan_output.txt
-          echo '### 🧩 Terraform Plan Result' > plan_comment.md
-          echo '<details><summary>Click to view full plan logs</summary>' >> plan_comment.md
-          echo '' >> plan_comment.md
-          echo '```' >> plan_comment.md
-          cat plan_output.txt >> plan_comment.md
-          echo '```' >> plan_comment.md
-          echo '</details>' >> plan_comment.md
+          terraform -chdir=terraform_infra init -reconfigure
+          terraform -chdir=terraform_infra fmt
+          terraform -chdir=terraform_infra validate
+          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan.txt
+          {
+            echo '### 🧩 Terraform Plan Result'
+            echo '<details><summary>Click to view full plan logs</summary>'
+            echo ''
+            echo '```'
+            cat plan.txt
+            echo '```'
+            echo '</details>'
+          } > plan_comment.md
 
-      # ───────────────────────────────
-      # Step 7: Post Plan Output to PR
-      # ───────────────────────────────
-      - name: Post Terraform Plan to PR
-        if: steps.get_pr.outputs.number != ''
+      # Post Plan Output to PR
+      - name: Post Plan Output
+        if: steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.get_pr.outputs.number }}
+          number: ${{ steps.pr.outputs.number }}
           header: 🧩 Terraform Plan Output
           path: plan_comment.md
           recreate: true
-          ignore_empty: true
 
-      # ───────────────────────────────
-      # Step 8: Terraform Apply (on push, manual, or /apply comment)
-      # ───────────────────────────────
-      - name: Terraform Apply (Infra)
-        if: >
+      # ─── Terraform Apply ───
+      - name: Terraform Apply
+        if: |
           success() &&
           (
             github.event_name == 'push' ||
@@ -110,25 +90,24 @@ jobs:
             (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
           )
         run: |
-          terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply_output.txt
-          echo '### 🚀 Terraform Apply Result' > apply_comment.md
-          echo '<details><summary>Click to view full apply logs</summary>' >> apply_comment.md
-          echo '' >> apply_comment.md
-          echo '```' >> apply_comment.md
-          cat apply_output.txt >> apply_comment.md
-          echo '```' >> apply_comment.md
-          echo '</details>' >> apply_comment.md
+          terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
+          {
+            echo '### 🚀 Terraform Apply Result'
+            echo '<details><summary>Click to view full apply logs</summary>'
+            echo ''
+            echo '```'
+            cat apply.txt
+            echo '```'
+            echo '</details>'
+          } > apply_comment.md
 
-      # ───────────────────────────────
-      # Step 9: Post Apply Output to PR
-      # ───────────────────────────────
-      - name: Post Terraform Apply to PR
-        if: steps.get_pr.outputs.number != '' && success()
+      # Post Apply Output to PR
+      - name: Post Apply Output
+        if: steps.pr.outputs.number != '' && success()
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.get_pr.outputs.number }}
+          number: ${{ steps.pr.outputs.number }}
           header: 🚀 Terraform Apply Output
           path: apply_comment.md
           recreate: true
-          ignore_empty: true
