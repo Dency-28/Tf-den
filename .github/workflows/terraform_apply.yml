@@ -52,11 +52,15 @@ jobs:
       - name: Terraform Init (Backend)
         run: terraform -chdir=terraform_backend init
 
+      # ✅ Always apply backend for test and main
       - name: Terraform Apply (Backend)
-        if: |
-          startsWith(github.ref, 'refs/heads/test') || 
-          startsWith(github.ref, 'refs/heads/main')
         run: terraform -chdir=terraform_backend apply -auto-approve
+
+      # ⏳ Optional: short wait to ensure S3 & DynamoDB ready
+      - name: Wait for backend to settle
+        run: |
+          echo "⏳ Waiting 30 seconds for S3 backend to be fully ready..."
+          sleep 30
 
       # ───────────────────────────────
       # ☁️ Step 5: Terraform Infra
@@ -93,4 +97,4 @@ jobs:
         run: terraform -chdir=terraform_infra apply -auto-approve tfplan
 
       - name: Complete
-        run: echo "✅ Terraform pipeline completed."
+        run: echo "✅ Terraform pipeline completed successfully!"
