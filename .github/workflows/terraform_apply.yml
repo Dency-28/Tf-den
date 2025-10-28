@@ -3,7 +3,7 @@ name: Terraform CI/CD
 on:
   push:
     branches:
-      - test          # Run when code is pushed to test
+      - test          # Run when changes are pushed to test
       - main          # Run again when merged to main
     paths:
       - 'terraform_backend/**'
@@ -26,21 +26,22 @@ jobs:
 
     env:
       AWS_REGION: us-east-1
+      S3_BUCKET: tf-state-dency
 
     steps:
-      # Step 1️⃣ Checkout
+      # Step 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
       # Step 2️⃣ Setup Terraform
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
       # Step 3️⃣ Configure AWS credentials
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -52,15 +53,24 @@ jobs:
       - name: Terraform Init (Backend)
         run: terraform -chdir=terraform_backend init
 
-      # ✅ Always apply backend for test and main
       - name: Terraform Apply (Backend)
         run: terraform -chdir=terraform_backend apply -auto-approve
 
-      # ⏳ Optional: short wait to ensure S3 & DynamoDB ready
-      - name: Wait for backend to settle
+      # ✅ Step 4.1: Wait until S3 bucket exists (fixes race condition)
+      - name: Wait for S3 backend to be ready
         run: |
-          echo "⏳ Waiting 30 seconds for S3 backend to be fully ready..."
-          sleep 30
+          echo "⏳ Waiting until S3 bucket ${S3_BUCKET} is available..."
+          for i in {1..10}; do
+            if aws s3api head-bucket --bucket "${S3_BUCKET}" 2>/dev/null; then
+              echo "✅ S3 bucket ${S3_BUCKET} is ready."
+              exit 0
+            else
+              echo "⌛ Not ready yet... retrying in 10s..."
+              sleep 10
+            fi
+          done
+          echo "❌ S3 bucket ${S3_BUCKET} not found after waiting."
+          exit 1
 
       # ───────────────────────────────
       # ☁️ Step 5: Terraform Infra
@@ -88,7 +98,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: "✅ Terraform Plan executed successfully for test branch."
+              body: "✅ Terraform Plan executed successfully for **test branch**."
             });
 
       # ✅ Apply Infra only when merged to main
