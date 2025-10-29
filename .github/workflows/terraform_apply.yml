@@ -1,11 +1,8 @@
-name: Terraform Plan / Apply (Test Branch)
+name: Terraform CI/CD via Comment (Test Branch)
 
 on:
   issue_comment:
     types: [created]
-  pull_request:
-    types: [opened, synchronize, reopened]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,42 +11,127 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan or Apply
-    runs-on: ubuntu-latest
     if: >
-      github.event.issue.pull_request &&
-      (contains(github.event.comment.body, '/plan') ||
-       contains(github.event.comment.body, '/apply'))
+      github.event.issue.pull_request != null &&
+      github.event.issue.state == 'open' &&
+      startsWith(github.event.issue.pull_request.head.ref, 'test') &&
+      (contains(github.event.comment.body, '/plan') || contains(github.event.comment.body, '/apply'))
+    name: Terraform Plan/Apply (Test Branch)
+    runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      # Step 1️⃣: Checkout the PR branch
+      - name: Checkout PR branch
+        uses: actions/checkout@v3
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event.issue.pull_request.head.ref }}
 
+      # Step 2️⃣: Setup Terraform
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.9.5
+          terraform_version: 1.6.6
 
-      - name: Terraform Init
-        run: terraform -chdir=terraform_infra init -input=false
+      # Step 3️⃣: Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Validate
+      # Step 4️⃣: Extract PR number
+      - name: Get PR Number
+        id: get_pr
+        uses: jwalton/gh-find-current-pr@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          state: open
+
+      # ───────────────────────────────
+      # Step 5️⃣: Terraform Backend Init
+      # ───────────────────────────────
+      - name: Terraform Init (Backend)
+        run: terraform -chdir=terraform_backend init -input=false
+
+      # ───────────────────────────────
+      # Step 6️⃣: Terraform Plan or Apply (Backend)
+      # ───────────────────────────────
+      - name: Terraform Backend Plan/Apply
+        id: backend_action
+        run: |
+          if echo "${{ github.event.comment.body }}" | grep -qi "/apply"; then
+            terraform -chdir=terraform_backend apply -auto-approve | tee backend_output.txt
+          else
+            terraform -chdir=terraform_backend plan | tee backend_output.txt
+          fi
+
+      - name: Post Backend Output to PR
+        if: steps.get_pr.outputs.number != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ steps.get_pr.outputs.number }}
+          header: 🧱 Terraform Backend Result
+          path: backend_output.txt
+          recreate: true
+          ignore_empty: true
+
+      # ───────────────────────────────
+      # Step 7️⃣: Terraform Infra Init
+      # ───────────────────────────────
+      - name: Terraform Init (Infra)
+        run: terraform -chdir=terraform_infra init -reconfigure -input=false
+
+      - name: Terraform Validate (Infra)
         run: terraform -chdir=terraform_infra validate
 
-      - name: Terraform Plan
-        if: contains(github.event.comment.body, '/plan')
-        run: terraform -chdir=terraform_infra plan -no-color -input=false
-
-      - name: Terraform Apply
-        if: contains(github.event.comment.body, '/apply')
-        run: terraform -chdir=terraform_infra apply -auto-approve -input=false
-
-      - name: Comment Result
-        if: always()
+      # ───────────────────────────────
+      # Step 8️⃣: Terraform Plan or Apply (Infra)
+      # ───────────────────────────────
+      - name: Terraform Infra Plan/Apply
+        id: infra_action
         run: |
-          echo "✅ Terraform job finished for ${{ github.event.comment.body }}"
+          if echo "${{ github.event.comment.body }}" | grep -qi "/apply"; then
+            terraform -chdir=terraform_infra apply -auto-approve | tee infra_output.txt
+          else
+            terraform -chdir=terraform_infra plan | tee infra_output.txt
+          fi
+
+      - name: Post Infra Output to PR
+        if: steps.get_pr.outputs.number != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ steps.get_pr.outputs.number }}
+          header: 🚀 Terraform Infra Result
+          path: infra_output.txt
+          recreate: true
+          ignore_empty: true
+
+      # ───────────────────────────────
+      # Step 9️⃣: Terraform Outputs (Only for /apply)
+      # ───────────────────────────────
+      - name: Terraform Output Values
+        if: contains(github.event.comment.body, '/apply')
+        run: |
+          terraform -chdir=terraform_infra output -json > tf_outputs.json
+          terraform -chdir=terraform_infra output > tf_outputs.txt
+          echo '### 🌐 Terraform Output Values' > output_comment.md
+          echo '```' >> output_comment.md
+          cat tf_outputs.txt >> output_comment.md
+          echo '```' >> output_comment.md
+
+      - name: Post Terraform Outputs to PR
+        if: contains(github.event.comment.body, '/apply') && steps.get_pr.outputs.number != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ steps.get_pr.outputs.number }}
+          header: 🌐 Terraform Outputs (Public IP, DNS, etc.)
+          path: output_comment.md
+          recreate: true
+          ignore_empty: true
