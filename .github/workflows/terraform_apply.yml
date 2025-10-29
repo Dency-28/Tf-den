@@ -1,59 +1,35 @@
-name: Terraform CI/CD
+name: Terraform Comment Trigger (Main)
 
 on:
-  workflow_dispatch:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
 
 jobs:
-  terraform:
-    name: Terraform Deployment
+  trigger:
+    if: |
+      github.event.issue.pull_request != null &&
+      (contains(github.event.comment.body, '/plan') || contains(github.event.comment.body, '/apply'))
     runs-on: ubuntu-latest
 
-    env:
-      AWS_REGION: us-east-1
-
     steps:
-      # Step 1️⃣: Checkout repository
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Extract PR branch name
+        id: extract
+        run: |
+          pr_url="${{ github.event.issue.pull_request.url }}"
+          branch=$(gh api "$pr_url" --jq '.head.ref')
+          echo "branch=$branch" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 2️⃣: Setup Terraform
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.6.6
-
-      # Step 3️⃣: Configure AWS credentials
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # ───────────────────────────────
-      # Step 1: Apply terraform_backend
-      # ───────────────────────────────
-      - name: Terraform Init (Backend)
-        run: terraform -chdir=terraform_backend init
-
-      - name: Terraform Apply (Backend)
-        run: terraform -chdir=terraform_backend apply -auto-approve
-
-      # ───────────────────────────────
-      # Step 2: Apply terraform_infra
-      # ───────────────────────────────
-      - name: Terraform Init (Infra)
-        run: terraform -chdir=terraform_infra init -reconfigure
-
-      - name: Terraform Format (Infra)
-        run: terraform -chdir=terraform_infra fmt
-
-      - name: Terraform Validate (Infra)
-        run: terraform -chdir=terraform_infra validate
-
-      - name: Terraform Plan (Infra)
-        run: terraform -chdir=terraform_infra plan -out=tfplan
-
-      - name: Terraform Apply (Infra)
-        if: success()
-        run: terraform -chdir=terraform_infra apply -auto-approve tfplan
+      - name: Trigger Terraform workflow on testing branch
+        run: |
+          gh workflow run terraform_ci_cd.yml \
+            --ref "${{ steps.extract.outputs.branch }}" \
+            -f comment="${{ github.event.comment.body }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
