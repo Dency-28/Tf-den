@@ -38,4 +38,4 @@ jobs:
         run: terraform destroy -auto-approve
 
       - name: Destroy Complete
-        run: echo "✅ Infrastructure destroy completed successfully."
+        run: echo "✅ Infrastructure (including RDS + IAM) destroyed successfully."
