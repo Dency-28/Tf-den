@@ -1,11 +1,11 @@
-name: Terraform Full Destroy (Infra + Backend)
+name: Terraform Infra Destroy
 
 on:
   workflow_dispatch:
 
 jobs:
   destroy:
-    name: Destroy Terraform Infrastructure and Backend
+    name: Destroy Terraform Infrastructure
     runs-on: ubuntu-latest
 
     env:
@@ -14,23 +14,14 @@ jobs:
       DYNAMO_TABLE: tf-state-locks
 
     steps:
-      # ------------------------------
-      # STEP 1: Checkout code
-      # ------------------------------
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ------------------------------
-      # STEP 2: Setup Terraform
-      # ------------------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.5.7
 
-      # ------------------------------
-      # STEP 3: Configure AWS Credentials
-      # ------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -38,113 +29,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ------------------------------
-      # STEP 4: Terraform Init (Infra)
-      # ------------------------------
-      - name: Terraform Init (Infra)
+      - name: Terraform Init
         working-directory: terraform_infra
         run: terraform init -input=false -reconfigure
 
-      # ------------------------------
-      # STEP 5: Terraform Destroy Infrastructure
-      # ------------------------------
-      - name: Terraform Destroy Infrastructure
+      - name: Terraform Destroy
         working-directory: terraform_infra
-        run: |
-          echo "🔥 Destroying Terraform-managed resources..."
-          terraform destroy -auto-approve || echo "⚠️ Destroy failed or some resources already deleted."
+        run: terraform destroy -auto-approve
 
-      # ------------------------------
-      # STEP 6: Manual Cleanup for Stubborn Resources (RDS + IAM)
-      # ------------------------------
-      - name: Cleanup RDS Instances and Snapshots
-        run: |
-          set +e
-          echo "🔍 Checking for leftover RDS instances..."
-          DBS=$(aws rds describe-db-instances --query 'DBInstances[].DBInstanceIdentifier' --output text)
-          for DB in $DBS; do
-            echo "🧱 Deleting RDS instance: $DB"
-            aws rds delete-db-instance --db-instance-identifier "$DB" --skip-final-snapshot || true
-          done
-          echo "⏳ Waiting for RDS instances to delete..."
-          for DB in $DBS; do
-            aws rds wait db-instance-deleted --db-instance-identifier "$DB" || true
-          done
-          echo "✅ RDS cleanup done."
-
-      - name: Cleanup IAM Roles and Instance Profiles
-        run: |
-          set +e
-          echo "🔍 Checking for leftover IAM roles..."
-          ROLES=$(aws iam list-roles --query 'Roles[?contains(RoleName, `tf`)].RoleName' --output text)
-          for ROLE in $ROLES; do
-            echo "🧱 Deleting IAM role: $ROLE"
-            # Detach managed policies
-            POLICIES=$(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text)
-            for POLICY in $POLICIES; do
-              aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$POLICY" || true
-            done
-            # Delete inline policies
-            INLINE=$(aws iam list-role-policies --role-name "$ROLE" --query 'PolicyNames' --output text)
-            for IP in $INLINE; do
-              aws iam delete-role-policy --role-name "$ROLE" --policy-name "$IP" || true
-            done
-            # Remove instance profiles
-            PROFILES=$(aws iam list-instance-profiles-for-role --role-name "$ROLE" --query 'InstanceProfiles[].InstanceProfileName' --output text)
-            for PROFILE in $PROFILES; do
-              aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE" --role-name "$ROLE" || true
-              aws iam delete-instance-profile --instance-profile-name "$PROFILE" || true
-            done
-            # Finally delete role
-            aws iam delete-role --role-name "$ROLE" || true
-          done
-          echo "✅ IAM cleanup done."
-
-      # ------------------------------
-      # STEP 7: Wait for AWS resources to settle
-      # ------------------------------
-      - name: Wait for AWS Resource Cleanup
-        run: |
-          echo "⏳ Waiting 30 seconds for AWS to release resources..."
-          sleep 30
-
-      # ------------------------------
-      # STEP 8: Clean up S3 Backend
-      # ------------------------------
-      - name: Clean up S3 backend (force delete)
-        run: |
-          set +e
-          echo "🧹 Cleaning up S3 backend bucket: ${S3_BUCKET}"
-          aws s3api head-bucket --bucket "${S3_BUCKET}" >/dev/null 2>&1
-          if [ $? -eq 0 ]; then
-            echo "Emptying bucket ${S3_BUCKET} (including all versions)..."
-            aws s3api delete-objects --bucket ${S3_BUCKET} --delete "$(aws s3api list-object-versions --bucket ${S3_BUCKET} --output=json --query='{Objects: Versions[].{Key:Key,VersionId:VersionId}}')" >/dev/null 2>&1 || true
-            aws s3api delete-objects --bucket ${S3_BUCKET} --delete "$(aws s3api list-object-versions --bucket ${S3_BUCKET} --output=json --query='{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}')" >/dev/null 2>&1 || true
-            aws s3 rb s3://${S3_BUCKET} --force || echo "⚠️ Bucket might already be deleted."
-          else
-            echo "⚠️ S3 bucket ${S3_BUCKET} not found, skipping."
-          fi
-
-      # ------------------------------
-      # STEP 9: Delete DynamoDB Table
-      # ------------------------------
-      - name: Delete DynamoDB Table (Lock Table)
-        run: |
-          set +e
-          echo "🔍 Checking if DynamoDB table ${DYNAMO_TABLE} exists..."
-          aws dynamodb describe-table --table-name ${DYNAMO_TABLE} >/dev/null 2>&1
-          if [ $? -eq 0 ]; then
-            echo "🧱 Deleting DynamoDB table: ${DYNAMO_TABLE}"
-            aws dynamodb delete-table --table-name ${DYNAMO_TABLE}
-            aws dynamodb wait table-not-exists --table-name ${DYNAMO_TABLE}
-            echo "✅ DynamoDB table deleted successfully."
-          else
-            echo "⚠️ DynamoDB table ${DYNAMO_TABLE} not found, skipping."
-          fi
-
-      # ------------------------------
-      # STEP 10: Final Confirmation
-      # ------------------------------
-      - name: Final Confirmation
-        run: |
-          echo "✅ All Terraform infra, RDS, IAM, S3, and DynamoDB backend cleaned up successfully!"
+      - name: Destroy Complete
+        run: echo "✅ Infrastructure destroy completed successfully."
