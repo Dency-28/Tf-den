@@ -2,9 +2,9 @@ name: Terraform CI/CD (Test Branch)
 
 on:
   push:
-    branches: [test]
+    branches: [testing]
   pull_request:
-    branches: [test]
+    branches: [testing]
   issue_comment:
     types: [created]
   workflow_dispatch:
