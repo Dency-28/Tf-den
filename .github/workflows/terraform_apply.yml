@@ -169,3 +169,174 @@ jobs:
           header: 🚀 Terraform Infra Apply
           path: apply_comment.md
           recreate: true
+name: Terraform CI/CD (Test Branch)
+
+on:
+  pull_request:
+    branches: [testing]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  terraform:
+    name: Terraform Plan & Apply (Test)
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+
+    env:
+      AWS_REGION: us-east-1
+
+    # Run only for PRs and comment-based commands
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' &&
+        (contains(github.event.comment.body, '/plan') ||
+         contains(github.event.comment.body, '/apply')))
+
+    steps:
+      # ─────────── Checkout Repo ───────────
+      - uses: actions/checkout@v4
+
+      # ─────────── Setup Terraform ───────────
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      # ─────────── Configure AWS ───────────
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ─────────── Get PR Number ───────────
+      - id: pr
+        uses: jwalton/gh-find-current-pr@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          state: open
+
+      # ─────────── Terraform Backend Plan ───────────
+      - name: Terraform Plan (Backend)
+        id: backend_plan
+        if: |
+          github.event_name == 'pull_request' ||
+          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
+        run: |
+          terraform -chdir=terraform_backend init -input=false -reconfigure
+          terraform -chdir=terraform_backend validate
+          terraform -chdir=terraform_backend plan -no-color -out=backend-tfplan | tee backend_plan.txt
+          {
+            echo '### 🧱 Terraform Backend Plan Result'
+            echo '<details><summary>Click to view backend plan logs</summary>'
+            echo ''
+            echo '```'
+            cat backend_plan.txt
+            echo '```'
+            echo '</details>'
+          } > backend_plan_comment.md
+
+      # ─────────── Post Backend Plan Output ───────────
+      - name: Post Backend Plan Output
+        if: steps.pr.outputs.number != '' && steps.backend_plan.conclusion == 'success'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ steps.pr.outputs.number }}
+          header: 🧱 Terraform Backend Plan
+          path: backend_plan_comment.md
+          recreate: true
+
+      # ─────────── Terraform Backend Apply ───────────
+      - name: Terraform Apply (Backend)
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
+        run: |
+          terraform -chdir=terraform_backend apply -auto-approve backend-tfplan | tee backend_apply.txt
+          {
+            echo '### 🧱 Terraform Backend Apply Result'
+            echo '<details><summary>Click to view backend apply logs</summary>'
+            echo ''
+            echo '```'
+            cat backend_apply.txt
+            echo '```'
+            echo '</details>'
+          } > backend_apply_comment.md
+
+      # ─────────── Post Backend Apply Output ───────────
+      - name: Post Backend Apply Output
+        if: steps.pr.outputs.number != '' && success()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ steps.pr.outputs.number }}
+          header: 🧱 Terraform Backend Apply
+          path: backend_apply_comment.md
+          recreate: true
+
+      # ─────────── Terraform Infra Plan ───────────
+      - name: Terraform Plan (Infra)
+        id: plan
+        if: |
+          github.event_name == 'pull_request' ||
+          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
+        run: |
+          terraform -chdir=terraform_infra init -reconfigure
+          terraform -chdir=terraform_infra fmt
+          terraform -chdir=terraform_infra validate
+          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan.txt
+          {
+            echo '### 🧩 Terraform Infra Plan Result'
+            echo '<details><summary>Click to view infra plan logs</summary>'
+            echo ''
+            echo '```'
+            cat plan.txt
+            echo '```'
+            echo '</details>'
+          } > plan_comment.md
+
+      # ─────────── Post Infra Plan Output ───────────
+      - name: Post Infra Plan Output
+        if: steps.pr.outputs.number != '' && steps.plan.conclusion == 'success'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ steps.pr.outputs.number }}
+          header: 🧩 Terraform Infra Plan
+          path: plan_comment.md
+          recreate: true
+
+      # ─────────── Terraform Infra Apply ───────────
+      - name: Terraform Apply (Infra)
+        id: apply
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
+        run: |
+          terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
+          {
+            echo '### 🚀 Terraform Infra Apply Result'
+            echo '<details><summary>Click to view infra apply logs</summary>'
+            echo ''
+            echo '```'
+            cat apply.txt
+            echo '```'
+            echo '</details>'
+          } > apply_comment.md
+
+      # ─────────── Post Infra Apply Output ───────────
+      - name: Post Infra Apply Output
+        if: steps.pr.outputs.number != '' && steps.apply.conclusion == 'success'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ steps.pr.outputs.number }}
+          header: 🚀 Terraform Infra Apply
+          path: apply_comment.md
+          recreate: true
