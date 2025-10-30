@@ -1,58 +1,63 @@
 name: Terraform CI/CD (Test Branch)
-
+ 
 on:
+  pull_request:
+    branches: [test]
   issue_comment:
     types: [created]
   workflow_dispatch:
-
+ 
 jobs:
   terraform:
     name: Terraform Plan & Apply (Test)
     runs-on: ubuntu-latest
 
+    # 👇 This makes sure the workflow runs ONLY when a comment includes /apply
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')) ||
+      github.event_name == 'pull_request'
+
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
       issues: write
 
     env:
       AWS_REGION: us-east-1
-      REPO: ${{ github.repository }}
-      ISSUE_NUMBER: ${{ github.event.issue.number }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      # Checkout repo
+      - uses: actions/checkout@v4
 
-      - name: Check if comment is /apply
-        run: |
-          COMMENT="${{ github.event.comment.body }}"
-          echo "User comment: $COMMENT"
-          if echo "$COMMENT" | grep -q '^/apply'; then
-            echo "✅ Detected /apply command. Proceeding..."
-          else
-            echo "❌ Not an /apply comment. Exiting workflow."
-            exit 0
-          fi
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      # Setup Terraform
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      # Configure AWS credentials
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Backend Init & Apply
+      # Get PR number
+      - id: pr
+        uses: jwalton/gh-find-current-pr@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          state: open
+
+      # ─── Backend Setup ───
+      - name: Init & Apply Backend
         run: |
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend apply -auto-approve
 
+      # ─── Infra Plan ───
       - name: Terraform Plan
+        id: plan
         run: |
           terraform -chdir=terraform_infra init -reconfigure
           terraform -chdir=terraform_infra fmt
@@ -68,19 +73,23 @@ jobs:
             echo '</details>'
           } > plan_comment.md
 
-      - name: Post Plan Output to PR
-        env:
+      # Post Plan Output to PR
+      - name: Post Plan Output
+        if: steps.pr.outputs.number != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Posting plan to PR #${ISSUE_NUMBER}"
-          BODY_JSON=$(jq -Rs '.' plan_comment.md)
-          curl -sS -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
-            -d "{\"body\": $BODY_JSON}"
+          number: ${{ steps.pr.outputs.number }}
+          header: 🧩 Terraform Plan Output
+          path: plan_comment.md
+          recreate: true
 
+      # ─── Terraform Apply ───
       - name: Terraform Apply
+        if: |
+          success() &&
+          github.event_name == 'issue_comment' &&
+          contains(github.event.comment.body, '/apply')
         run: |
           terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
           {
@@ -93,14 +102,13 @@ jobs:
             echo '</details>'
           } > apply_comment.md
 
-      - name: Post Apply Output to PR
-        env:
+      # Post Apply Output to PR
+      - name: Post Apply Output
+        if: steps.pr.outputs.number != '' && success()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Posting apply result to PR #${ISSUE_NUMBER}"
-          BODY_JSON=$(jq -Rs '.' apply_comment.md)
-          curl -sS -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
-            -d "{\"body\": $BODY_JSON}"
+          number: ${{ steps.pr.outputs.number }}
+          header: 🚀 Terraform Apply Output
+          path: apply_comment.md
+          recreate: true
