@@ -1,4 +1,4 @@
-name: Terraform Apply
+name: Terraform CI/CD (Test Branch)
 
 on:
   pull_request:
@@ -6,146 +6,78 @@ on:
       - testing
       - main
   issue_comment:
-    types:
-      - created
+    types: [created]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply (Test)
+    name: Terraform Plan & Apply (Comment Trigger)
     runs-on: ubuntu-latest
 
-    env:
-      AWS_REGION: us-east-1
+    if: github.event.issue.pull_request != '' # ensures it runs only in PRs
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Terraform
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.6
+          terraform_version: 1.9.5
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # Get PR number
-      - id: pr
-        uses: jwalton/gh-find-current-pr@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          state: open
-
-      # ─── PLAN: Backend (plan-only, no backend connect) + Infra (plan-only) ───
-      - name: Terraform Plan (Backend + Infra)
-        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
-        id: plan
+      - name: Extract comment command
+        id: command
         run: |
-          echo "🧩 Running terraform plan (preview only) for backend and infra (no backend connection)..."
-
-          # Backend plan only (do not create remote backend)
-          echo "=== Backend: init (local) + plan ==="
-          terraform -chdir=terraform_backend init -backend=false -input=false -no-color | tee backend_init.txt
-          terraform -chdir=terraform_backend fmt -check || true
-          terraform -chdir=terraform_backend validate -no-color | tee backend_validate.txt || true
-          terraform -chdir=terraform_backend plan -no-color -out=backendplan | tee backend_plan.txt || true
-
-          # Infra plan only (do not connect remote backend) and save plan to tfplan
-          echo "=== Infra: init (local) + plan ==="
-          terraform -chdir=terraform_infra init -backend=false -input=false -no-color | tee infra_init.txt
-          terraform -chdir=terraform_infra fmt -check || true
-          terraform -chdir=terraform_infra validate -no-color | tee infra_validate.txt || true
-          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee infra_plan.txt || true
-
-          # Combine outputs into markdown
-          {
-            echo '### 🧩 Terraform Plan Result (preview only)'
-            echo ''
-            echo '<details><summary>Backend Plan Output</summary>'
-            echo ''
-            echo '```'
-            cat backend_init.txt || true
-            cat backend_validate.txt || true
-            cat backend_plan.txt || true
-            echo '```'
-            echo '</details>'
-            echo ''
-            echo '<details><summary>Infra Plan Output</summary>'
-            echo ''
-            echo '```'
-            cat infra_init.txt || true
-            cat infra_validate.txt || true
-            cat infra_plan.txt || true
-            echo '```'
-            echo '</details>'
-          } > plan_comment.md
-
-      - name: Post Plan Output to PR
-        if: steps.pr.outputs.number != '' && github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number }}
-          header: 🧩 Terraform Plan Output
-          path: plan_comment.md
-          recreate: true
-
-      # ─── APPLY: Infra only (skip backend) ───
-      - name: Terraform Apply (Infra only)
-        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
-        id: apply
-        run: |
-          echo "🚀 Applying terraform for infra only (backend skipped)..."
-
-          # Ensure infra has a local init (do not attempt backend S3/DDB)
-          terraform -chdir=terraform_infra init -backend=false -input=false -no-color | tee infra_apply_init.txt
-
-          # If tfplan exists from the plan step (tfplan), apply it; otherwise run a normal apply
-          if [ -f "terraform_infra/tfplan" ]; then
-            echo "Using saved tfplan..."
-            terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
-            APPLY_EXIT=${PIPESTATUS[0]}
+          comment=$(echo "${{ github.event.comment.body }}" | tr '[:upper:]' '[:lower:]')
+          if [[ "$comment" == "/plan" ]]; then
+            echo "cmd=plan" >> $GITHUB_OUTPUT
+          elif [[ "$comment" == "/apply" ]]; then
+            echo "cmd=apply" >> $GITHUB_OUTPUT
           else
-            echo "No tfplan file found; running a fresh plan+apply (local-state)..."
-            terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee infra_plan_for_apply.txt
-            terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
-            APPLY_EXIT=${PIPESTATUS[0]}
+            echo "cmd=none" >> $GITHUB_OUTPUT
           fi
 
-          # exit with the terraform apply exit code (so job fails on real errors)
-          if [ "$APPLY_EXIT" -ne 0 ]; then
-            echo "Terraform apply failed. Showing logs below."
-            cat apply.txt || true
-            exit $APPLY_EXIT
-          fi
+      - name: Stop if not /plan or /apply
+        if: steps.command.outputs.cmd == 'none'
+        run: echo "No matching command. Skipping."
 
-          {
-            echo '### 🚀 Terraform Apply Result (Infra only)'
-            echo '<details><summary>Click to view full apply logs</summary>'
-            echo ''
-            echo '```'
-            cat infra_apply_init.txt || true
-            cat apply.txt || true
-            echo '```'
-            echo '</details>'
-          } > apply_comment.md
+      # -------------------------------------------------------------------
+      # PLAN (includes backend + infra preview)
+      # -------------------------------------------------------------------
+      - name: Terraform Init & Plan - Backend
+        if: steps.command.outputs.cmd == 'plan'
+        run: |
+          terraform -chdir=terraform_backend init -input=false
+          terraform -chdir=terraform_backend plan -no-color -input=false || true
 
-      - name: Post Apply Output to PR
-        if: steps.pr.outputs.number != '' && github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
+      - name: Terraform Init & Plan - Infra
+        if: steps.command.outputs.cmd == 'plan'
+        run: |
+          terraform -chdir=terraform_infra init -input=false
+          terraform -chdir=terraform_infra plan -no-color -input=false || true
+
+      # -------------------------------------------------------------------
+      # APPLY (infra only — backend skipped)
+      # -------------------------------------------------------------------
+      - name: Terraform Init & Apply - Infra Only
+        if: steps.command.outputs.cmd == 'apply'
+        run: |
+          terraform -chdir=terraform_infra init -input=false
+          terraform -chdir=terraform_infra apply -auto-approve -no-color
+
+      # -------------------------------------------------------------------
+      # Post plan/apply output in PR
+      # -------------------------------------------------------------------
+      - name: Comment back results
+        if: always()
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number }}
-          header: 🚀 Terraform Apply Output
-          path: apply_comment.md
           recreate: true
+          path: |
+            ${{ github.workspace }}/terraform_backend/plan.out
+            ${{ github.workspace }}/terraform_infra/plan.out
