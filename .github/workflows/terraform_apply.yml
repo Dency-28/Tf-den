@@ -1,152 +1,35 @@
-name: Terraform CI/CD
+name: Terraform Comment Trigger (Main)
 
 on:
-  workflow_dispatch:
-    inputs:
-      comment:
-        description: "Comment that triggered this run (/plan or /apply)"
-        required: false
-        default: "/plan"
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
 
 jobs:
-  terraform:
-    name: Terraform Plan or Apply
+  trigger:
+    if: |
+      github.event.issue.pull_request != null &&
+      (contains(github.event.comment.body, '/plan') || contains(github.event.comment.body, '/apply'))
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: read
-
-    env:
-      AWS_REGION: us-east-1
-      COMMENT: ${{ github.event.inputs.comment }}
-
     steps:
-      # Step 1️⃣: Checkout
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      # Step 2️⃣: Setup Terraform
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.6.6
-
-      # Step 3️⃣: Configure AWS
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # Step 4️⃣: Get PR Number
-      - name: Get PR Number
-        id: get_pr
-        uses: jwalton/gh-find-current-pr@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          state: open
-
-      # ───────────────────────────────
-      # Backend PLAN
-      # ───────────────────────────────
-      - name: Terraform Init (Backend)
-        run: terraform -chdir=terraform_backend init
-
-      - name: Terraform Plan (Backend)
-        run: terraform -chdir=terraform_backend plan -no-color | tee backend_plan.txt
-
-      - name: Post Backend Plan
-        if: steps.get_pr.outputs.number != '' && success()
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.get_pr.outputs.number }}
-          header: 🧱 Terraform Backend Plan
-          path: backend_plan.txt
-          recreate: true
-
-      # ───────────────────────────────
-      # Backend APPLY (only /apply)
-      # ───────────────────────────────
-      - name: Terraform Apply (Backend)
-        if: contains(env.COMMENT, '/apply')
-        run: terraform -chdir=terraform_backend apply -auto-approve | tee backend_apply.txt
-
-      - name: Post Backend Apply
-        if: contains(env.COMMENT, '/apply') && steps.get_pr.outputs.number != ''
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.get_pr.outputs.number }}
-          header: 🧱 Terraform Backend Apply
-          path: backend_apply.txt
-          recreate: true
-
-      # ───────────────────────────────
-      # Infra PLAN
-      # ───────────────────────────────
-      - name: Terraform Init (Infra)
-        run: terraform -chdir=terraform_infra init -reconfigure
-
-      - name: Terraform Plan (Infra)
-        run: terraform -chdir=terraform_infra plan -no-color | tee infra_plan.txt
-
-      - name: Post Infra Plan
-        if: steps.get_pr.outputs.number != '' && success()
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.get_pr.outputs.number }}
-          header: 🧩 Terraform Infra Plan
-          path: infra_plan.txt
-          recreate: true
-
-      # ───────────────────────────────
-      # Infra APPLY (only /apply)
-      # ───────────────────────────────
-      - name: Terraform Apply (Infra)
-        if: contains(env.COMMENT, '/apply')
+      - name: Extract PR branch name
+        id: extract
         run: |
-          terraform -chdir=terraform_infra apply -auto-approve | tee infra_apply.txt
-          echo '### 🚀 Terraform Apply Result' > apply_comment.md
-          echo '<details><summary>Click to view full apply logs</summary>' >> apply_comment.md
-          echo '```' >> apply_comment.md
-          cat infra_apply.txt >> apply_comment.md
-          echo '```' >> apply_comment.md
-          echo '</details>' >> apply_comment.md
-
-      - name: Post Infra Apply Output
-        if: contains(env.COMMENT, '/apply') && steps.get_pr.outputs.number != ''
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
+          pr_url="${{ github.event.issue.pull_request.url }}"
+          branch=$(gh api "$pr_url" --jq '.head.ref')
+          echo "branch=$branch" >> $GITHUB_OUTPUT
+        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.get_pr.outputs.number }}
-          header: 🚀 Terraform Infra Apply
-          path: apply_comment.md
-          recreate: true
 
-      # ───────────────────────────────
-      # Outputs (only /apply)
-      # ───────────────────────────────
-      - name: Terraform Output Values
-        if: contains(env.COMMENT, '/apply')
+      - name: Trigger Terraform workflow on testing branch
         run: |
-          terraform -chdir=terraform_infra output -json > tf_outputs.json
-          terraform -chdir=terraform_infra output > tf_outputs.txt
-          echo '### 🌐 Terraform Outputs' > output_comment.md
-          echo '```' >> output_comment.md
-          cat tf_outputs.txt >> output_comment.md
-          echo '```' >> output_comment.md
-
-      - name: Post Outputs
-        if: contains(env.COMMENT, '/apply') && steps.get_pr.outputs.number != ''
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
+          gh workflow run terraform.yml \
+            --ref "${{ steps.extract.outputs.branch }}" \
+            -f comment="${{ github.event.comment.body }}"
+        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.get_pr.outputs.number }}
-          header: 🌐 Terraform Outputs
-          path: output_comment.md
-          recreate: true
