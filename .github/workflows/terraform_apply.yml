@@ -2,6 +2,11 @@ name: Terraform CI/CD
 
 on:
   workflow_dispatch:
+    inputs:
+      apply_changes:
+        description: "Apply Terraform changes (true = plan + apply, false = plan only)"
+        required: true
+        default: "false"
 
 jobs:
   terraform:
@@ -40,6 +45,7 @@ jobs:
         run: terraform -chdir=terraform_backend plan -out=tfplan
 
       - name: Terraform Apply (Backend)
+        if: ${{ github.event.inputs.apply_changes == 'true' }}
         run: terraform -chdir=terraform_backend apply -auto-approve tfplan
 
       # ───────────────────────────────
@@ -52,5 +58,5 @@ jobs:
         run: terraform -chdir=terraform_infra plan -out=tfplan
 
       - name: Terraform Apply (Infra)
-        if: success()
+        if: ${{ github.event.inputs.apply_changes == 'true' }}
         run: terraform -chdir=terraform_infra apply -auto-approve tfplan
