@@ -1,5 +1,5 @@
-name: Terraform CI/CD 
- 
+name: Terraform Apply
+
 on:
   pull_request:
     branches:
@@ -9,79 +9,88 @@ on:
     types:
       - created
   workflow_dispatch:
- 
+
 permissions:
   contents: read
   pull-requests: write
   issues: write
- 
+
 jobs:
   terraform:
     name: Terraform Plan & Apply (Test)
     runs-on: ubuntu-latest
-	
+
     env:
       AWS_REGION: us-east-1
- 
+
     steps:
-      # Checkout repo
-      - uses: actions/checkout@v4
- 
-      # Setup Terraform
-      - uses: hashicorp/setup-terraform@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
- 
-      # Configure AWS credentials
-      - uses: aws-actions/configure-aws-credentials@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
- 
+
       # Get PR number
       - id: pr
         uses: jwalton/gh-find-current-pr@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
- 
-      # ─── Terraform Plan (for both backend + infra) ───
+
+      # ─── PLAN: Backend (plan-only, no backend connect) + Infra (plan-only) ───
       - name: Terraform Plan (Backend + Infra)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
         id: plan
         run: |
-          echo "🧩 Running Terraform plan for backend and infra..."
-          
-          # Backend plan
-          terraform -chdir=terraform_backend init -input=false
-          terraform -chdir=terraform_backend plan -no-color | tee backend_plan.txt
-          
-          # Infra plan
-          terraform -chdir=terraform_infra init -reconfigure
-          terraform -chdir=terraform_infra fmt
-          terraform -chdir=terraform_infra validate
-          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee infra_plan.txt
-          
+          echo "🧩 Running terraform plan (preview only) for backend and infra (no backend connection)..."
+
+          # Backend plan only (do not create remote backend)
+          echo "=== Backend: init (local) + plan ==="
+          terraform -chdir=terraform_backend init -backend=false -input=false -no-color | tee backend_init.txt
+          terraform -chdir=terraform_backend fmt -check || true
+          terraform -chdir=terraform_backend validate -no-color | tee backend_validate.txt || true
+          terraform -chdir=terraform_backend plan -no-color -out=backendplan | tee backend_plan.txt || true
+
+          # Infra plan only (do not connect remote backend) and save plan to tfplan
+          echo "=== Infra: init (local) + plan ==="
+          terraform -chdir=terraform_infra init -backend=false -input=false -no-color | tee infra_init.txt
+          terraform -chdir=terraform_infra fmt -check || true
+          terraform -chdir=terraform_infra validate -no-color | tee infra_validate.txt || true
+          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee infra_plan.txt || true
+
+          # Combine outputs into markdown
           {
-            echo '### 🧩 Terraform Plan Result'
-            echo '<details><summary>Backend Plan Logs</summary>'
+            echo '### 🧩 Terraform Plan Result (preview only)'
+            echo ''
+            echo '<details><summary>Backend Plan Output</summary>'
             echo ''
             echo '```'
-            cat backend_plan.txt
+            cat backend_init.txt || true
+            cat backend_validate.txt || true
+            cat backend_plan.txt || true
             echo '```'
             echo '</details>'
             echo ''
-            echo '<details><summary>Infra Plan Logs</summary>'
+            echo '<details><summary>Infra Plan Output</summary>'
             echo ''
             echo '```'
-            cat infra_plan.txt
+            cat infra_init.txt || true
+            cat infra_validate.txt || true
+            cat infra_plan.txt || true
             echo '```'
             echo '</details>'
           } > plan_comment.md
- 
-      # Post Plan Output to PR
-      - name: Post Plan Output
+
+      - name: Post Plan Output to PR
         if: steps.pr.outputs.number != '' && github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
@@ -90,25 +99,48 @@ jobs:
           header: 🧩 Terraform Plan Output
           path: plan_comment.md
           recreate: true
- 
-      # ─── Terraform Apply (Infra only) ───
+
+      # ─── APPLY: Infra only (skip backend) ───
       - name: Terraform Apply (Infra only)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
+        id: apply
         run: |
-          echo "🚀 Running Terraform apply for infra only..."
-          terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
+          echo "🚀 Applying terraform for infra only (backend skipped)..."
+
+          # Ensure infra has a local init (do not attempt backend S3/DDB)
+          terraform -chdir=terraform_infra init -backend=false -input=false -no-color | tee infra_apply_init.txt
+
+          # If tfplan exists from the plan step (tfplan), apply it; otherwise run a normal apply
+          if [ -f "terraform_infra/tfplan" ]; then
+            echo "Using saved tfplan..."
+            terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
+            APPLY_EXIT=${PIPESTATUS[0]}
+          else
+            echo "No tfplan file found; running a fresh plan+apply (local-state)..."
+            terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee infra_plan_for_apply.txt
+            terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
+            APPLY_EXIT=${PIPESTATUS[0]}
+          fi
+
+          # exit with the terraform apply exit code (so job fails on real errors)
+          if [ "$APPLY_EXIT" -ne 0 ]; then
+            echo "Terraform apply failed. Showing logs below."
+            cat apply.txt || true
+            exit $APPLY_EXIT
+          fi
+
           {
-            echo '### 🚀 Terraform Apply Result (Infra Only)'
+            echo '### 🚀 Terraform Apply Result (Infra only)'
             echo '<details><summary>Click to view full apply logs</summary>'
             echo ''
             echo '```'
-            cat apply.txt
+            cat infra_apply_init.txt || true
+            cat apply.txt || true
             echo '```'
             echo '</details>'
           } > apply_comment.md
- 
-      # Post Apply Output to PR
-      - name: Post Apply Output
+
+      - name: Post Apply Output to PR
         if: steps.pr.outputs.number != '' && github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
