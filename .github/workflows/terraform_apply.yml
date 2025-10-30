@@ -1,8 +1,6 @@
 name: Terraform CI/CD (Test Branch)
 
 on:
-  pull_request:
-    branches: [test]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -19,47 +17,53 @@ jobs:
 
     env:
       AWS_REGION: us-east-1
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      REPO: ${{ github.repository }}
 
     steps:
-      # Checkout repo
+      # ─── Detect /apply command ───
+      - name: Check if comment is /apply
+        id: check_comment
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          echo "User comment: $COMMENT"
+          if echo "$COMMENT" | grep -q '^/apply'; then
+            echo "run_apply=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_apply=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Stop if not /apply
+        if: ${{ steps.check_comment.outputs.run_apply == 'false' }}
+        run: |
+          echo "❌ No /apply command detected — skipping workflow."
+          exit 0
+
+      # ─── Checkout Repo ───
       - uses: actions/checkout@v4
 
-      # Setup Terraform
+      # ─── Setup Terraform ───
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # Configure AWS credentials
+      # ─── Configure AWS Credentials ───
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ─── Determine issue/PR number (works for pull_request and issue_comment) ───
-      - name: Determine issue/PR number
-        id: determine_issue
-        run: |
-          # For a comment on a PR, github.event.issue.number contains the PR number.
-          if [ "${{ github.event_name }}" = "issue_comment" ]; then
-            echo "issue_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "issue_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-          else
-            echo "issue_number=" >> $GITHUB_OUTPUT
-          fi
-
-      # ─── Backend Setup ───
-      - name: Init & Apply Backend
+      # ─── Backend Apply ───
+      - name: Terraform Backend Apply
         run: |
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend apply -auto-approve
 
-      # ─── Infra Plan ───
+      # ─── Terraform Plan ───
       - name: Terraform Plan
         id: plan
         run: |
-          set -o pipefail
           terraform -chdir=terraform_infra init -reconfigure
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
@@ -74,36 +78,21 @@ jobs:
             echo '</details>'
           } > plan_comment.md
 
-      # ─── Post Plan Output (direct API call; will not skip when issue_number present) ───
+      # ─── Post Plan Output ───
       - name: Post Plan Output to PR
-        if: ${{ steps.determine_issue.outputs.issue_number != '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ISSUE_NUM=${{ steps.determine_issue.outputs.issue_number }}
-          REPO="${{ github.repository }}"
-          # Read plan_comment.md into a JSON string safely
-          if [ -f plan_comment.md ]; then
-            BODY_JSON=$(jq -Rs '.' plan_comment.md)
-            curl -sS -X POST \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$REPO/issues/$ISSUE_NUM/comments" \
-              -d "{\"body\": $BODY_JSON}"
-            echo "Posted plan comment to issue/PR #$ISSUE_NUM"
-          else
-            echo "plan_comment.md not found — nothing to post"
-            exit 1
-          fi
+          BODY_JSON=$(jq -Rs '.' plan_comment.md)
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            -d "{\"body\": $BODY_JSON}"
+          echo "✅ Posted plan result to PR #${ISSUE_NUMBER}"
 
       # ─── Terraform Apply ───
       - name: Terraform Apply
-        if: |
-          success() &&
-          (
-            github.event_name == 'workflow_dispatch' ||
-            (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
-          )
         run: |
           terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
           {
@@ -116,23 +105,15 @@ jobs:
             echo '</details>'
           } > apply_comment.md
 
-      # ─── Post Apply Output to PR (direct API call) ───
+      # ─── Post Apply Output ───
       - name: Post Apply Output to PR
-        if: ${{ steps.determine_issue.outputs.issue_number != '' && success() }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ISSUE_NUM=${{ steps.determine_issue.outputs.issue_number }}
-          REPO="${{ github.repository }}"
-          if [ -f apply_comment.md ]; then
-            BODY_JSON=$(jq -Rs '.' apply_comment.md)
-            curl -sS -X POST \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$REPO/issues/$ISSUE_NUM/comments" \
-              -d "{\"body\": $BODY_JSON}"
-            echo "Posted apply comment to issue/PR #$ISSUE_NUM"
-          else
-            echo "apply_comment.md not found — nothing to post"
-            exit 1
-          fi
+          BODY_JSON=$(jq -Rs '.' apply_comment.md)
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            -d "{\"body\": $BODY_JSON}"
+          echo "✅ Posted apply result to PR #${ISSUE_NUMBER}"
