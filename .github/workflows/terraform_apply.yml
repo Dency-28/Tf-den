@@ -1,4 +1,4 @@
-name: Terraform CI/CD (Testing Branch)
+name: Terraform CI/CD (Testing → Main PR)
 
 on:
   issue_comment:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan/Apply via Comment
+    name: Terraform Plan/Apply (Testing Branch)
     runs-on: ubuntu-latest
     if: |
       github.event.issue.pull_request != null &&
@@ -21,9 +21,11 @@ jobs:
       AWS_REGION: us-east-1
 
     steps:
-      # Step 1️⃣: Checkout repository
-      - name: Checkout repository
+      # Step 1️⃣: Checkout PR source branch (testing)
+      - name: Checkout PR branch
         uses: actions/checkout@v3
+        with:
+          ref: refs/heads/testing
 
       # Step 2️⃣: Setup Terraform
       - name: Setup Terraform
@@ -39,28 +41,8 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 4️⃣: Fetch PR branch info
-      - name: Get PR branch
-        id: pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = await github.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            core.setOutput('branch', pr.data.head.ref);
-
-      # Step 5️⃣: Ensure it runs only on 'testing' branch
-      - name: Verify branch
-        if: steps.pr.outputs.branch != 'testing'
-        run: |
-          echo "❌ This workflow only runs for PRs targeting the 'testing' branch."
-          exit 1
-
       # ───────────────────────────────
-      # Step 6: Terraform Backend
+      # Step 4: Terraform Backend
       # ───────────────────────────────
       - name: Terraform Init (Backend)
         run: terraform -chdir=terraform_backend init
@@ -73,7 +55,7 @@ jobs:
         run: terraform -chdir=terraform_backend apply -auto-approve tfplan -no-color > backend_apply.txt
 
       # ───────────────────────────────
-      # Step 7: Terraform Infra
+      # Step 5: Terraform Infra
       # ───────────────────────────────
       - name: Terraform Init (Infra)
         run: terraform -chdir=terraform_infra init -reconfigure
@@ -86,7 +68,7 @@ jobs:
         run: terraform -chdir=terraform_infra apply -auto-approve tfplan -no-color > infra_apply.txt
 
       # ───────────────────────────────
-      # Step 8: Post output to PR comment
+      # Step 6: Post output back to PR
       # ───────────────────────────────
       - name: Post Terraform Output to PR
         if: always()
@@ -102,7 +84,7 @@ jobs:
 
             const action = context.payload.comment.body.includes('/apply') ? 'Apply' : 'Plan';
             const output = `
-### 🧱 Terraform ${action} Results
+### 🧱 Terraform ${action} Results (Testing Branch)
 
 **Backend**
 \`\`\`
