@@ -1,8 +1,6 @@
 name: Terraform CI/CD (Test Branch)
 
 on:
-  push:
-    branches: [testing]
   pull_request:
     branches: [testing]
   issue_comment:
@@ -23,7 +21,6 @@ jobs:
       AWS_REGION: us-east-1
 
     if: |
-      github.event_name == 'push' ||
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' &&
         (contains(github.event.comment.body, '/plan') ||
@@ -62,7 +59,6 @@ jobs:
       - name: Terraform Plan
         id: plan
         if: |
-          github.event_name == 'push' ||
           github.event_name == 'pull_request' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
         run: |
@@ -95,7 +91,6 @@ jobs:
       - name: Terraform Apply
         id: apply
         if: |
-          github.event_name == 'push' ||
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
         run: |
