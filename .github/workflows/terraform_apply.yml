@@ -27,82 +27,98 @@ jobs:
          contains(github.event.comment.body, '/apply')))
 
     steps:
-      # ─────────── Checkout Repository ───────────
-      - uses: actions/checkout@v4
+      # ─────────────── Checkout ───────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # ─────────── Setup Terraform ───────────
-      - uses: hashicorp/setup-terraform@v3
+      # ─────────────── Setup Terraform ───────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # ─────────── Configure AWS Credentials ───────────
-      - uses: aws-actions/configure-aws-credentials@v4
+      # ─────────────── AWS Auth ───────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ─────────── Get PR Number ───────────
+      # ─────────────── Get PR Info ───────────────
       - id: pr
         uses: jwalton/gh-find-current-pr@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ─────────── Backend Setup ───────────
-      - name: Init & Apply Backend
-        run: |
-          echo "🪣 Setting up Terraform Backend..."
-          terraform -chdir=terraform_backend init -input=false
-          terraform -chdir=terraform_backend apply -auto-approve
-
-          echo "⏳ Waiting 15s for backend resources (S3/DynamoDB) to be ready..."
-          sleep 15
-
-      # ─────────── Terraform Plan ───────────
-      - name: Terraform Plan
-        id: plan
+      # ─────────────── Backend Plan (No Create) ───────────────
+      - name: Terraform Backend Plan
+        id: backend_plan
         if: |
           github.event_name == 'pull_request' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
         run: |
-          echo "🧩 Running Terraform Plan..."
-          terraform -chdir=terraform_infra init -reconfigure -input=false
-          terraform -chdir=terraform_infra fmt
-          terraform -chdir=terraform_infra validate
-          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan.txt
-
+          terraform -chdir=terraform_backend init -input=false -reconfigure
+          terraform -chdir=terraform_backend fmt -check
+          terraform -chdir=terraform_backend validate
+          terraform -chdir=terraform_backend plan -no-color | tee backend_plan.txt
           {
-            echo '### 🧩 Terraform Plan Result'
-            echo '<details><summary>Click to view full plan logs</summary>'
+            echo '### 🧩 Terraform Backend Plan'
+            echo '<details><summary>Click to view backend plan logs</summary>'
             echo ''
             echo '```'
-            cat plan.txt
+            cat backend_plan.txt
             echo '```'
             echo '</details>'
-          } > plan_comment.md
+          } > backend_comment.md
 
-      # ─────────── Post Plan Output to PR ───────────
-      - name: Post Plan Output
-        if: steps.pr.outputs.number != '' && steps.plan.conclusion == 'success'
+      # ─────────────── Infra Plan ───────────────
+      - name: Terraform Infra Plan
+        id: infra_plan
+        if: |
+          github.event_name == 'pull_request' ||
+          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
+        run: |
+          terraform -chdir=terraform_infra init -reconfigure
+          terraform -chdir=terraform_infra fmt
+          terraform -chdir=terraform_infra validate
+          terraform -chdir=terraform_infra plan -no-color | tee infra_plan.txt
+          {
+            echo '### 🏗️ Terraform Infra Plan'
+            echo '<details><summary>Click to view infra plan logs</summary>'
+            echo ''
+            echo '```'
+            cat infra_plan.txt
+            echo '```'
+            echo '</details>'
+          } > infra_comment.md
+
+      # ─────────────── Combine & Post Plan Output ───────────────
+      - name: Post Combined Plan Output
+        if: steps.pr.outputs.number != '' && (steps.backend_plan.conclusion == 'success' || steps.infra_plan.conclusion == 'success')
+        run: |
+          cat backend_comment.md > final_comment.md
+          echo "" >> final_comment.md
+          cat infra_comment.md >> final_comment.md
+        shell: bash
+
+      - name: Comment Plan Output to PR
+        if: steps.pr.outputs.number != '' && (steps.backend_plan.conclusion == 'success' || steps.infra_plan.conclusion == 'success')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.pr.outputs.number }}
-          header: 🧩 Terraform Plan Output
-          path: plan_comment.md
+          header: 🧩 Terraform Plan Summary
+          path: final_comment.md
           recreate: true
 
-      # ─────────── Terraform Apply ───────────
+      # ─────────────── Terraform Apply ───────────────
       - name: Terraform Apply
         id: apply
-        if: |
-          github.event_name == 'workflow_dispatch' ||
-          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
+        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         run: |
-          echo "🚀 Applying Terraform Infra..."
-          terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
-
+          terraform -chdir=terraform_infra apply -auto-approve | tee apply.txt
           {
             echo '### 🚀 Terraform Apply Result'
             echo '<details><summary>Click to view full apply logs</summary>'
@@ -113,7 +129,7 @@ jobs:
             echo '</details>'
           } > apply_comment.md
 
-      # ─────────── Post Apply Output to PR ───────────
+      # ─────────────── Post Apply Output ───────────────
       - name: Post Apply Output
         if: steps.pr.outputs.number != '' && steps.apply.conclusion == 'success'
         uses: marocchino/sticky-pull-request-comment@v2
