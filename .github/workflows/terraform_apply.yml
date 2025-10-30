@@ -28,7 +28,7 @@ jobs:
 
       - name: Trigger Terraform workflow on testing branch
         run: |
-          gh workflow run terraform_ci_cd.yml \
+          gh workflow run terraform.yml \
             --ref "${{ steps.extract.outputs.branch }}" \
             -f comment="${{ github.event.comment.body }}"
         env:
