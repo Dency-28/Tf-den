@@ -17,52 +17,42 @@ jobs:
 
     env:
       AWS_REGION: us-east-1
-      ISSUE_NUMBER: ${{ github.event.issue.number }}
       REPO: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
 
     steps:
-      # ─── Detect /apply command ───
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Check if comment is /apply
-        id: check_comment
         run: |
           COMMENT="${{ github.event.comment.body }}"
           echo "User comment: $COMMENT"
           if echo "$COMMENT" | grep -q '^/apply'; then
-            echo "run_apply=true" >> $GITHUB_OUTPUT
+            echo "✅ Detected /apply command. Proceeding..."
           else
-            echo "run_apply=false" >> $GITHUB_OUTPUT
+            echo "❌ Not an /apply comment. Exiting workflow."
+            exit 0
           fi
 
-      - name: Stop if not /apply
-        if: ${{ steps.check_comment.outputs.run_apply == 'false' }}
-        run: |
-          echo "❌ No /apply command detected — skipping workflow."
-          exit 0
-
-      # ─── Checkout Repo ───
-      - uses: actions/checkout@v4
-
-      # ─── Setup Terraform ───
-      - uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # ─── Configure AWS Credentials ───
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ─── Backend Apply ───
-      - name: Terraform Backend Apply
+      - name: Backend Init & Apply
         run: |
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend apply -auto-approve
 
-      # ─── Terraform Plan ───
       - name: Terraform Plan
-        id: plan
         run: |
           terraform -chdir=terraform_infra init -reconfigure
           terraform -chdir=terraform_infra fmt
@@ -78,20 +68,18 @@ jobs:
             echo '</details>'
           } > plan_comment.md
 
-      # ─── Post Plan Output ───
       - name: Post Plan Output to PR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "Posting plan to PR #${ISSUE_NUMBER}"
           BODY_JSON=$(jq -Rs '.' plan_comment.md)
           curl -sS -X POST \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
             -d "{\"body\": $BODY_JSON}"
-          echo "✅ Posted plan result to PR #${ISSUE_NUMBER}"
 
-      # ─── Terraform Apply ───
       - name: Terraform Apply
         run: |
           terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
@@ -105,15 +93,14 @@ jobs:
             echo '</details>'
           } > apply_comment.md
 
-      # ─── Post Apply Output ───
       - name: Post Apply Output to PR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "Posting apply result to PR #${ISSUE_NUMBER}"
           BODY_JSON=$(jq -Rs '.' apply_comment.md)
           curl -sS -X POST \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
             -d "{\"body\": $BODY_JSON}"
-          echo "✅ Posted apply result to PR #${ISSUE_NUMBER}"
