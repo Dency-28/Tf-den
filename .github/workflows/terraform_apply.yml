@@ -27,47 +27,42 @@ jobs:
          contains(github.event.comment.body, '/apply')))
 
     steps:
-      # Checkout repo
       - uses: actions/checkout@v4
 
-      # Setup Terraform
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # Configure AWS credentials
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Get PR number
       - id: pr
         uses: jwalton/gh-find-current-pr@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ─────────── Backend Setup (optional, won't fail if S3 missing) ───────────
+      # Backend init (ignore S3)
       - name: Init Backend (Skip errors)
-        run: |
-          terraform -chdir=terraform_backend init -input=false || true
+        run: terraform -chdir=terraform_backend init -input=false || true
 
-      # ─────────── Terraform Plan ───────────
+      # ─────────── PLAN ───────────
       - name: Terraform Plan
         id: plan
         if: |
           github.event_name == 'pull_request' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
         run: |
-          terraform -chdir=terraform_infra init -backend=false -reconfigure || true
+          terraform -chdir=terraform_infra init -backend=false -reconfigure
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
           terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan.txt
           {
             echo '### 🧩 Terraform Plan Result'
-            echo '<details><summary>Click to view full plan logs</summary>'
+            echo '<details><summary>Click to view plan logs</summary>'
             echo ''
             echo '```'
             cat plan.txt
@@ -75,9 +70,9 @@ jobs:
             echo '</details>'
           } > plan_comment.md
 
-      # Post Plan Output
-      - name: Post Plan Output
-        if: steps.pr.outputs.number != '' && steps.plan.conclusion == 'success'
+      # 🧱 Always Post Plan Output to PR
+      - name: Post Plan Output to PR
+        if: steps.plan.outcome == 'success' && steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -86,18 +81,16 @@ jobs:
           path: plan_comment.md
           recreate: true
 
-      # ─────────── Terraform Apply ───────────
+      # ─────────── APPLY ───────────
       - name: Terraform Apply
         id: apply
-        if: |
-          github.event_name == 'workflow_dispatch' ||
-          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
+        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         run: |
           terraform -chdir=terraform_infra init -reconfigure
           terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
           {
             echo '### 🚀 Terraform Apply Result'
-            echo '<details><summary>Click to view full apply logs</summary>'
+            echo '<details><summary>Click to view apply logs</summary>'
             echo ''
             echo '```'
             cat apply.txt
@@ -105,9 +98,8 @@ jobs:
             echo '</details>'
           } > apply_comment.md
 
-      # Post Apply Output
-      - name: Post Apply Output
-        if: steps.pr.outputs.number != '' && steps.apply.conclusion == 'success'
+      - name: Post Apply Output to PR
+        if: steps.apply.outcome == 'success' && steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
