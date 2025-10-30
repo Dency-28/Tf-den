@@ -1,4 +1,4 @@
-name: Terraform CI/CD 
+name: Terraform CI/CD (Test Branch)
 
 on:
   pull_request:
@@ -47,24 +47,45 @@ jobs:
           state: open
 
       # ─── Run Plan when /plan is commented ───
-      - name: Terraform Plan
+      - name: Terraform Plan (Backend + Infra)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
         id: plan
         run: |
-          terraform -chdir=terraform_backend init -input=false
-          terraform -chdir=terraform_backend apply -auto-approve
+          echo "🧩 Running Terraform Plan for backend and infra..."
 
-          terraform -chdir=terraform_infra init -reconfigure
-          terraform -chdir=terraform_infra fmt
-          terraform -chdir=terraform_infra validate
-          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan.txt
+          # Backend plan (no apply)
+          echo "=== Backend Plan ==="
+          terraform -chdir=terraform_backend init -input=false -no-color | tee backend_init.txt
+          terraform -chdir=terraform_backend fmt -check
+          terraform -chdir=terraform_backend validate -no-color | tee backend_validate.txt
+          terraform -chdir=terraform_backend plan -no-color | tee backend_plan.txt
 
+          # Infra plan
+          echo "=== Infra Plan ==="
+          terraform -chdir=terraform_infra init -reconfigure -no-color | tee infra_init.txt
+          terraform -chdir=terraform_infra fmt -check
+          terraform -chdir=terraform_infra validate -no-color | tee infra_validate.txt
+          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee infra_plan.txt
+
+          # Combine both plans into markdown output
           {
             echo '### 🧩 Terraform Plan Result'
-            echo '<details><summary>Click to view full plan logs</summary>'
+            echo ''
+            echo '<details><summary>Backend Plan Output</summary>'
             echo ''
             echo '```'
-            cat plan.txt
+            cat backend_init.txt
+            cat backend_validate.txt
+            cat backend_plan.txt
+            echo '```'
+            echo '</details>'
+            echo ''
+            echo '<details><summary>Infra Plan Output</summary>'
+            echo ''
+            echo '```'
+            cat infra_init.txt
+            cat infra_validate.txt
+            cat infra_plan.txt
             echo '```'
             echo '</details>'
           } > plan_comment.md
@@ -80,7 +101,7 @@ jobs:
           path: plan_comment.md
           recreate: true
 
-      # ─── Run Apply when /apply is commented ───
+      # ─── Terraform Apply (keep same) ───
       - name: Terraform Apply
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         id: apply
