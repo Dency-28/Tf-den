@@ -1,4 +1,4 @@
-name: Terraform CI/CD (testing Branch)
+name: Terraform CI/CD 
  
 on:
   pull_request:
@@ -125,3 +125,4 @@ jobs:
           header: 🚀 Terraform Apply Output
           path: apply_comment.md
           recreate: true
+
