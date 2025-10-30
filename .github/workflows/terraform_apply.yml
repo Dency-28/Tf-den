@@ -1,35 +1,56 @@
-name: Terraform Comment Trigger (Main)
+name: Terraform CI/CD
 
 on:
-  issue_comment:
-    types: [created]
-
-permissions:
-  contents: read
-  pull-requests: read
-  issues: read
+  workflow_dispatch:
 
 jobs:
-  trigger:
-    if: |
-      github.event.issue.pull_request != null &&
-      (contains(github.event.comment.body, '/plan') || contains(github.event.comment.body, '/apply'))
+  terraform:
+    name: Terraform Deployment
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Extract PR branch name
-        id: extract
-        run: |
-          pr_url="${{ github.event.issue.pull_request.url }}"
-          branch=$(gh api "$pr_url" --jq '.head.ref')
-          echo "branch=$branch" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      AWS_REGION: us-east-1
 
-      - name: Trigger Terraform workflow on testing branch
-        run: |
-          gh workflow run terraform.yml \
-            --ref "${{ steps.extract.outputs.branch }}" \
-            -f comment="${{ github.event.comment.body }}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # Step 1️⃣: Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Step 2️⃣: Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.6
+
+      # Step 3️⃣: Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ───────────────────────────────
+      # Step 1: Terraform Backend
+      # ───────────────────────────────
+      - name: Terraform Init (Backend)
+        run: terraform -chdir=terraform_backend init
+
+      - name: Terraform Plan (Backend)
+        run: terraform -chdir=terraform_backend plan -out=tfplan
+
+      - name: Terraform Apply (Backend)
+        run: terraform -chdir=terraform_backend apply -auto-approve tfplan
+
+      # ───────────────────────────────
+      # Step 2: Terraform Infra
+      # ───────────────────────────────
+      - name: Terraform Init (Infra)
+        run: terraform -chdir=terraform_infra init -reconfigure
+
+      - name: Terraform Plan (Infra)
+        run: terraform -chdir=terraform_infra plan -out=tfplan
+
+      - name: Terraform Apply (Infra)
+        if: success()
+        run: terraform -chdir=terraform_infra apply -auto-approve tfplan
