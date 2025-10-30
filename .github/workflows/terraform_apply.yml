@@ -1,4 +1,4 @@
-name: Terraform CI/CD 
+name: Terraform CI/CD
 
 on:
   pull_request:
@@ -46,16 +46,51 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ─── Run Backend Apply when /plan is commented ───
-      - name: Terraform Backend Apply (for /plan)
+      # ──────────────────────────────
+      # STEP 1: /plan — Local backend
+      # ──────────────────────────────
+      - name: Terraform Plan (Local Backend)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
+        id: plan
+        run: |
+          echo "✅ Running Terraform Plan using LOCAL backend"
+          terraform -chdir=terraform_infra init -backend-config="path=terraform.tfstate" -input=false
+          terraform -chdir=terraform_infra plan -input=false -out=tfplan | tee plan.txt
+
+          {
+            echo '### 🧩 Terraform Plan Result (/plan)'
+            echo '<details><summary>Click to view full plan logs</summary>'
+            echo ''
+            echo '```'
+            cat plan.txt
+            echo '```'
+            echo '</details>'
+          } > plan_comment.md
+
+      # Post Plan Output to PR
+      - name: Post Plan Output
+        if: steps.plan.conclusion == 'success' && steps.pr.outputs.number != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ steps.pr.outputs.number }}
+          header: 🧩 Terraform Plan Output (/plan)
+          path: plan_comment.md
+          recreate: true
+
+      # ──────────────────────────────
+      # STEP 2: /apply — Remote backend
+      # ──────────────────────────────
+      - name: Terraform Backend Apply (for /apply)
+        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         id: backend
         run: |
+          echo "🚀 Creating Backend (S3 + DynamoDB)"
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend apply -auto-approve | tee backend.txt
 
           {
-            echo '### 🧩 Terraform Backend Apply Result (/plan)'
+            echo '### 🪣 Terraform Backend Apply Result'
             echo '<details><summary>Click to view backend apply logs</summary>'
             echo ''
             echo '```'
@@ -64,23 +99,28 @@ jobs:
             echo '</details>'
           } > backend_comment.md
 
-      # Post Backend Output to PR
       - name: Post Backend Output
         if: steps.backend.conclusion == 'success' && steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.pr.outputs.number }}
-          header: 🧩 Terraform Backend Apply Output (/plan)
+          header: 🪣 Terraform Backend Apply Output (/apply)
           path: backend_comment.md
           recreate: true
 
-      # ─── Run Infra Apply when /apply is commented ───
       - name: Terraform Infra Apply (for /apply)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         id: apply
         run: |
-          terraform -chdir=terraform_infra init -reconfigure
+          echo "🔁 Switching Infra to Remote Backend"
+          terraform -chdir=terraform_infra init \
+            -backend-config="bucket=tf-state-dency" \
+            -backend-config="key=terraform.tfstate" \
+            -backend-config="region=us-east-1" \
+            -backend-config="dynamodb_table=tf-state-locks" \
+            -reconfigure -input=false
+
           terraform -chdir=terraform_infra apply -auto-approve | tee apply.txt
 
           {
