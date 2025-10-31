@@ -1,4 +1,4 @@
-name: Terraform CI/CD (testing branch)
+name: Terraform CI/CD (Testing Branch)
 
 on:
   pull_request:
@@ -14,11 +14,11 @@ permissions:
 
 jobs:
   terraform:
-    runs-on: ubuntu-latest
     name: Terraform Plan & Apply
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Terraform
@@ -33,141 +33,90 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Get PR number (if any)
+      - name: Detect PR number
         id: pr
         uses: jwalton/gh-find-current-pr@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      - name: Detect command
+      - name: Detect command (/plan or /apply)
         id: detect
         run: |
-          echo "event=${GITHUB_EVENT_NAME}" >> $GITHUB_OUTPUT
           ACTION="none"
           if [ "$GITHUB_EVENT_NAME" = "issue_comment" ]; then
             BODY=$(jq -r .comment.body "$GITHUB_EVENT_PATH" | tr '[:upper:]' '[:lower:]')
-            if echo "$BODY" | grep -q "^/plan"; then ACTION=plan; fi
-            if echo "$BODY" | grep -q "^/apply"; then ACTION=apply; fi
+            if echo "$BODY" | grep -q "^/plan"; then ACTION="plan"; fi
+            if echo "$BODY" | grep -q "^/apply"; then ACTION="apply"; fi
           else
-            # default on PR open/run -> plan
-            ACTION=plan
+            ACTION="plan"
           fi
           echo "action=$ACTION" >> $GITHUB_OUTPUT
 
-      - name: Stop if not plan/apply
+      - name: Stop if not plan or apply
         if: ${{ steps.detect.outputs.action == 'none' }}
-        run: |
-          echo "No /plan or /apply detected. Exiting."
+        run: echo "No /plan or /apply detected. Exiting."
 
-      ###############
-      # PLAN (NO BACKEND) - DO NOT MODIFY YOUR TF FILES
-      ###############
-      - name: Terraform Plan (skip backend)
+      ########################
+      # PLAN (Skip backend)
+      ########################
+      - name: Terraform Plan (Skip backend)
         if: ${{ steps.detect.outputs.action == 'plan' }}
-        env:
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
-          set -euo pipefail
-          echo "🧩 Starting /plan (backend will be ignored) ..."
+          set -e
+          echo "🧩 Running Terraform Plan (Skipping backend init)"
 
-          # copy infra to temp folder so repo files remain untouched
-          rm -rf tf_local || true
           mkdir tf_local
-          cp -r terraform_infra/* tf_local/ 2>/dev/null || true
-          # if terraform_infra files are at repo root, alter above path; this matches your repo structure
+          cp -r terraform_infra/* tf_local/
 
-          # Create a Python script to remove any backend "s3" blocks robustly
+          # Remove backend block safely before init
           cat > /tmp/remove_backend.py <<'PY'
-import glob, io, re, sys
-tf_files = glob.glob("**/*.tf", recursive=True)
-pattern = re.compile(r'terraform\s*\{.*?backend\s*"s3"\s*\{.*?\}.*?\}', re.S)
-for f in tf_files:
-    try:
-        s = io.open(f, "r", encoding="utf-8").read()
-        new = pattern.sub("", s)
-        if new != s:
-            io.open(f, "w", encoding="utf-8").write(new)
-    except Exception as e:
-        print("skip", f, e, file=sys.stderr)
+import re, glob
+for f in glob.glob("tf_local/**/*.tf", recursive=True):
+    text = open(f).read()
+    new = re.sub(r'terraform\s*\{[^{}]*backend\s*"s3"\s*\{[^{}]*\}[^{}]*\}', '', text, flags=re.S)
+    if new != text:
+        open(f, 'w').write(new)
 PY
-
-          # run the remover inside the temp folder
-          cd tf_local
           python3 /tmp/remove_backend.py
 
-          # ensure there is at least one .tf (safety)
-          if ! ls *.tf >/dev/null 2>&1; then
-            echo "No .tf files found in terraform_infra after copy; aborting with error."
-            exit 1
-          fi
-
-          echo "⚙️ Init (local mode) — backend will NOT be used"
-          # init with backend disabled (safe local mode)
+          cd tf_local
           terraform init -backend=false -input=false -no-color
-
-          echo "✅ Validate"
-          terraform fmt -check || true
           terraform validate -no-color
-
-          echo "🧮 Plan (local only)"
           terraform plan -no-color -input=false | tee ../plan.txt || true
 
-          # build PR comment
-          {
-            echo "### 🧩 Terraform Plan (LOCAL - backend ignored)"
-            echo ""
-            echo "_This plan ran in local mode inside the runner. S3/Dynamo were NOT used or created._"
-            echo ""
-            echo "<details><summary>Click to view full plan</summary>"
-            echo ""
-            echo '```'
-            cat ../plan.txt || true
-            echo '```'
-            echo ""
-            echo "</details>"
-          } > ../plan_comment.md
+          echo "### 🧩 Terraform Plan (Local mode - backend skipped)" > ../plan_comment.md
+          echo "\`\`\`" >> ../plan_comment.md
+          cat ../plan.txt >> ../plan_comment.md
+          echo "\`\`\`" >> ../plan_comment.md
 
-      - name: Post Plan result to PR
+      - name: Post Plan to PR
         if: ${{ steps.detect.outputs.action == 'plan' }}
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           number: ${{ steps.pr.outputs.number }}
-          header: "🧩 Terraform Plan Output (local)"
+          header: "🧩 Terraform Plan Output"
           path: plan_comment.md
 
-      ###############
-      # APPLY (uses backend normally)
-      ###############
-      - name: Terraform Apply (with backend)
+      ########################
+      # APPLY (Real backend)
+      ########################
+      - name: Terraform Apply
         if: ${{ steps.detect.outputs.action == 'apply' }}
         run: |
-          set -euo pipefail
-          echo "🚀 Starting /apply: using real backend in terraform_infra ..."
+          set -e
+          echo "🚀 Running Terraform Apply (with backend)"
           cd terraform_infra
-
-          # initialize with backend (this will require the S3 bucket + dynamo to exist)
           terraform init -reconfigure -input=false -no-color
-
-          echo "✅ Validate"
           terraform validate -no-color
-
-          echo "🚀 Apply"
           terraform apply -auto-approve -input=false | tee ../apply.txt || true
 
-          {
-            echo "### 🚀 Terraform Apply Output"
-            echo ""
-            echo "<details><summary>Click to view apply logs</summary>"
-            echo ""
-            echo '```'
-            cat ../apply.txt || true
-            echo '```'
-            echo ""
-            echo "</details>"
-          } > ../apply_comment.md
+          echo "### 🚀 Terraform Apply Output" > ../apply_comment.md
+          echo "\`\`\`" >> ../apply_comment.md
+          cat ../apply.txt >> ../apply_comment.md
+          echo "\`\`\`" >> ../apply_comment.md
 
-      - name: Post Apply result to PR
+      - name: Post Apply to PR
         if: ${{ steps.detect.outputs.action == 'apply' }}
         uses: marocchino/sticky-pull-request-comment@v2
         with:
