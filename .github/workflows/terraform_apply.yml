@@ -17,18 +17,18 @@ permissions:
 
 jobs:
   terraform:
-    # Trigger only if it's a comment on a PR and comment contains /apply
+    # Trigger only if comment contains /apply AND it is on a PR
     if: |
       github.event.issue.pull_request != '' &&
       contains(github.event.comment.body, '/apply')
-    name: Terraform Full Apply (PR Trigger)
+    name: Terraform Apply Full Pipeline (PR Trigger)
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
 
     steps:
-      # Step 1️⃣ Checkout repo
+      # Step 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
 
@@ -47,7 +47,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # ───────────────────────────────
-      # Step 4️⃣ Terraform Backend Setup
+      # Step 4️⃣ Terraform Backend
       # ───────────────────────────────
       - name: Terraform Init (Backend)
         run: terraform -chdir=terraform_backend init
@@ -56,7 +56,7 @@ jobs:
         run: terraform -chdir=terraform_backend apply -auto-approve
 
       # ───────────────────────────────
-      # Step 5️⃣ Terraform Infra Setup
+      # Step 5️⃣ Terraform Infra
       # ───────────────────────────────
       - name: Terraform Init (Infra)
         run: terraform -chdir=terraform_infra init -reconfigure
@@ -72,30 +72,31 @@ jobs:
         id: apply
         run: terraform -chdir=terraform_infra apply -auto-approve -no-color
 
-      # ───────────────────────────────
-      # Step 6️⃣ Terraform Output
-      # ───────────────────────────────
-      - name: Terraform Output
+      - name: Terraform Output (Infra)
         id: output
         run: terraform -chdir=terraform_infra output -no-color
 
       # ───────────────────────────────
-      # Step 7️⃣ Post Result to PR Comment
+      # Step 6️⃣ Post Result to PR Comment
       # ───────────────────────────────
-      - name: Post Apply Result to PR
+      - name: Post Terraform Result to PR
         uses: peter-evans/create-or-update-comment@v3
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
-            🚀 **Terraform Apply Result (Full Pipeline)**
+            🚀 **Terraform Apply Completed Successfully**
 
-            ✅ Backend + Infra successfully applied
+            ### 🧩 Plan Summary
+            ```
+            ${{ steps.plan.outputs.stdout }}
+            ```
 
+            ### ✅ Apply Output
             ```
             ${{ steps.apply.outputs.stdout }}
             ```
 
-            🌐 **Outputs:**
+            ### 🌐 Terraform Outputs
             ```
             ${{ steps.output.outputs.stdout }}
             ```
