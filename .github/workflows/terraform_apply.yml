@@ -5,49 +5,56 @@ on:
       - testing
       - main
   issue_comment:
-    types:
-      - created
+    types: [created]
   workflow_dispatch:
+
 permissions:
   contents: read
   pull-requests: write
   issues: write
+
 jobs:
   terraform:
     name: Terraform Plan & Apply (Test)
     runs-on: ubuntu-latest
     env:
       AWS_REGION: us-east-1
+
     steps:
-      # Checkout repo
       - uses: actions/checkout@v4
-      # Setup Terraform
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
-      # Configure AWS credentials
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-      # Get PR number
-      - id: pr
+
+      # Detect PR from comment context
+      - name: Find PR Number
+        id: find-pr
         uses: jwalton/gh-find-current-pr@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
-      # ─── Run Plan when /plan is commented ───
+
+      # ─── Run Terraform Plan ───
       - name: Terraform Plan
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
         id: plan
         run: |
+          set -e
+          echo "🏗️ Running Terraform Plan..."
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend apply -auto-approve
           terraform -chdir=terraform_infra init -reconfigure
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
           terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan.txt
+          
           {
             echo '### 🧩 Terraform Plan Result'
             echo '<details><summary>Click to view full plan logs</summary>'
@@ -57,21 +64,23 @@ jobs:
             echo '```'
             echo '</details>'
           } > plan_comment.md
-      # Post Plan Output to PR
-      - name: Post Plan Output
-        if: steps.plan.conclusion == 'success' && steps.pr.outputs.number != ''
+
+      - name: Post Plan Output to PR
+        if: steps.find-pr.outputs.number != '' && contains(github.event.comment.body, '/plan')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number }}
+          number: ${{ steps.find-pr.outputs.number }}
           header: 🧩 Terraform Plan Output
           path: plan_comment.md
           recreate: true
-      # ─── Run Apply when /apply is commented ───
+
+      # ─── Run Terraform Apply ───
       - name: Terraform Apply
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         id: apply
         run: |
+          set -e
           terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
           {
             echo '### 🚀 Terraform Apply Result'
@@ -82,13 +91,13 @@ jobs:
             echo '```'
             echo '</details>'
           } > apply_comment.md
-      # Post Apply Output to PR
-      - name: Post Apply Output
-        if: steps.apply.conclusion == 'success' && steps.pr.outputs.number != ''
+
+      - name: Post Apply Output to PR
+        if: steps.find-pr.outputs.number != '' && contains(github.event.comment.body, '/apply')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number }}
+          number: ${{ steps.find-pr.outputs.number }}
           header: 🚀 Terraform Apply Output
           path: apply_comment.md
           recreate: true
