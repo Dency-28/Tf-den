@@ -1,5 +1,4 @@
-name: Terraform CI/CD
-
+name: Terraform CI/CD 
 on:
   pull_request:
     branches:
@@ -11,20 +10,19 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
   issues: write
 
 jobs:
   terraform:
-    name: Terraform Full Run (/tf)
+    name: Terraform Plan & Apply (Test)
     runs-on: ubuntu-latest
-
     env:
       AWS_REGION: us-east-1
 
     steps:
-      # Checkout repository
+      # Checkout repo
       - uses: actions/checkout@v4
 
       # Setup Terraform
@@ -39,48 +37,27 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Get PR info (for comment output)
+      # Get PR number
       - id: pr
         uses: jwalton/gh-find-current-pr@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ─── Run full pipeline when /tf is commented ───
-      - name: Terraform Full Run
-        id: full
-        if: >
-          github.event_name == 'issue_comment' &&
-          (
-            contains(github.event.comment.body, '/tf') ||
-            contains(github.event.comment.body, '/TF') ||
-            contains(github.event.comment.body, '/Tf')
-          )
+      # ─── Run Plan + Apply when /tf is commented ───
+      - name: Terraform Plan & Apply
+        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/tf')
+        id: tf
         run: |
-          echo "⚙️ Running full Terraform backend + infra (Plan + Apply)..."
-
-          # Backend setup
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend apply -auto-approve
-
-          # Infra init + plan
           terraform -chdir=terraform_infra init -reconfigure
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
           terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan.txt
-
-          # Infra apply
           terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
-
-          # Collect outputs
-          echo ""
-          echo "🌐 Fetching Terraform Outputs..."
-          terraform -chdir=terraform_infra output -json | jq -r 'to_entries[] | "\(.key): \(.value.value)"' | tee outputs.txt
-
           {
-            echo '### ⚙️ Terraform Full Run (/tf)'
-            echo ''
-            echo '#### 🧩 Terraform Plan Output'
+            echo '### 🧩 Terraform Plan Result'
             echo '<details><summary>Click to view full plan logs</summary>'
             echo ''
             echo '```'
@@ -88,27 +65,22 @@ jobs:
             echo '```'
             echo '</details>'
             echo ''
-            echo '#### 🚀 Terraform Apply Output'
+            echo '### 🚀 Terraform Apply Result'
             echo '<details><summary>Click to view full apply logs</summary>'
             echo ''
             echo '```'
             cat apply.txt
             echo '```'
             echo '</details>'
-            echo ''
-            echo '### 🌐 Terraform Outputs (Public IPs, URLs, etc.)'
-            echo '```'
-            cat outputs.txt
-            echo '```'
-          } > fullrun_comment.md
+          } > tf_comment.md
 
-      # ─── Post combined Plan + Apply output ───
-      - name: Post Full Run Output
-        if: steps.full.conclusion == 'success' && steps.pr.outputs.number != ''
+      # Post Plan + Apply Output to PR
+      - name: Post TF Output
+        if: steps.tf.conclusion == 'success' && steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.pr.outputs.number }}
-          header: ⚙️ Terraform Full Run (/tf)
-          path: fullrun_comment.md
+          header: 🧩 Terraform /tf Output
+          path: tf_comment.md
           recreate: true
