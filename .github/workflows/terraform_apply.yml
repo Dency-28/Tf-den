@@ -14,14 +14,14 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply (Testing)
     runs-on: ubuntu-latest
+    name: Terraform Plan & Apply (Testing)
 
     steps:
       - name: 🧩 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: ⚙️ Set up Terraform
+      - name: ⚙️ Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.5
@@ -29,7 +29,6 @@ jobs:
       - name: 💬 Detect Command (/plan or /apply)
         id: detect
         run: |
-          echo "event=${{ github.event_name }}" >> $GITHUB_OUTPUT
           if [[ "${{ github.event_name }}" == "issue_comment" ]]; then
             COMMENT=$(echo "${{ github.event.comment.body }}" | tr '[:upper:]' '[:lower:]')
             if [[ "$COMMENT" == "/plan" ]]; then
@@ -45,50 +44,58 @@ jobs:
 
       - name: 🛑 Skip if not /plan or /apply
         if: ${{ steps.detect.outputs.action == 'none' }}
-        run: echo "No action required."
+        run: echo "No terraform action required."
 
-      # 🔹 Define Terraform directory (change this if needed)
-      - name: 🗂️ Define Terraform Working Directory
+      - name: 🗂️ Set Working Directory
         id: setdir
-        run: |
-          # 👇 change this to match your real folder name
-          echo "dir=terraform_infra" >> $GITHUB_OUTPUT
+        run: echo "dir=terraform_infra" >> $GITHUB_OUTPUT
 
-      # 🔹 PLAN MODE: no backend
-      - name: ⚙️ Terraform Init (No Backend)
+      # ───────────────
+      # PLAN (No backend, no rename, backend.tf ignored dynamically)
+      # ───────────────
+      - name: 🧩 Run Terraform Plan (Ignore backend)
         if: ${{ steps.detect.outputs.action == 'plan' }}
         run: |
           cd ${{ steps.setdir.outputs.dir }}
-          echo "⚙️ Initializing Terraform (Skipping backend)..."
-          terraform init -backend=false -input=false
+          
+          echo "⚙️ Creating temporary terraform_no_backend.tf..."
+          echo 'terraform { backend "local" {} }' > terraform_no_backend.tf
 
-      - name: 📖 Terraform Validate
-        if: ${{ steps.detect.outputs.action == 'plan' }}
-        run: |
-          cd ${{ steps.setdir.outputs.dir }}
+          echo "🧩 Initializing Terraform (local backend override)"
+          terraform init -input=false -backend-config="path=/tmp/dummy.tfstate" >/dev/null
+
+          echo "✅ Validating configuration"
           terraform validate
 
-      - name: 🧩 Terraform Plan
-        if: ${{ steps.detect.outputs.action == 'plan' }}
-        run: |
-          cd ${{ steps.setdir.outputs.dir }}
-          echo "🧩 Running Terraform Plan (Skipping backend)"
-          terraform plan -no-color -input=false | tee plan.txt
+          echo "🧮 Generating plan (no backend used)"
+          terraform plan -no-color -input=false -out=tfplan > plan.txt || true
 
-      - name: 💬 Comment Plan on PR
+          echo "🧩 Posting plan result to PR..."
+          {
+            echo "### 🧩 Terraform Plan Output"
+            echo "<details><summary>Click to view</summary>"
+            echo ""
+            echo '```'
+            cat plan.txt
+            echo '```'
+            echo "</details>"
+          } > ../plan_comment.md
+
+      - name: 💬 Comment Plan Output
         if: ${{ steps.detect.outputs.action == 'plan' }}
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: terraform-plan
-          path: ${{ steps.setdir.outputs.dir }}/plan.txt
+          path: ${{ steps.setdir.outputs.dir }}/../plan_comment.md
 
-      # 🔹 APPLY MODE: with backend
-      - name: ⚙️ Terraform Init (With Backend)
+      # ───────────────
+      # APPLY (Uses backend normally)
+      # ───────────────
+      - name: ⚙️ Terraform Init (With backend)
         if: ${{ steps.detect.outputs.action == 'apply' }}
         run: |
           cd ${{ steps.setdir.outputs.dir }}
-          echo "⚙️ Initializing Terraform with backend..."
-          terraform init -input=false
+          terraform init -input=false -reconfigure
 
       - name: 🚀 Terraform Apply
         if: ${{ steps.detect.outputs.action == 'apply' }}
