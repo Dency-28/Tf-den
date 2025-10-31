@@ -1,39 +1,27 @@
-name: Terraform CI/CD
+name: Terraform Infra Destroy
 
 on:
-  pull_request:
-    branches:
-      - testing
-      - main
-  issue_comment:
-    types: [created]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-
 jobs:
-  terraform:
-    name: Terraform Plan & Apply (Testing Branch)
+  destroy:
+    name: Destroy Terraform Infrastructure
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
+      S3_BUCKET: tf-state-dency
+      DYNAMO_TABLE: tf-state-locks
 
     steps:
-      # Checkout your repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.5.7
 
-      # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -41,69 +29,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Detect /plan or /apply
-      - name: Detect command
-        id: command
-        run: |
-          comment="${{ github.event.comment.body }}"
-          if [[ "$comment" == "/plan" ]]; then
-            echo "command=plan" >> $GITHUB_OUTPUT
-          elif [[ "$comment" == "/apply" ]]; then
-            echo "command=apply" >> $GITHUB_OUTPUT
-          else
-            echo "command=none" >> $GITHUB_OUTPUT
-          fi
+      - name: Terraform Init
+        working-directory: terraform_infra
+        run: terraform init -input=false -reconfigure
 
-      # Terraform Plan (NO backend, skip S3 & DynamoDB)
-      - name: Terraform Plan (Skip Backend)
-        if: steps.command.outputs.command == 'plan'
-        id: plan
-        run: |
-          echo "🧩 Running Terraform Plan (Skipping backend init)"
-          cd terraform_infra
+      - name: Terraform Destroy
+        working-directory: terraform_infra
+        run: terraform destroy -auto-approve
 
-          # Temporarily disable backend
-          if [ -f backend.tf ]; then
-            echo "📁 Temporarily renaming backend.tf to backend.tf.bak"
-            mv backend.tf backend.tf.bak
-          fi
-
-          terraform init -input=false -backend=false
-          terraform validate
-          terraform plan -no-color -out=tfplan.out || true
-
-          # Restore backend file
-          if [ -f backend.tf.bak ]; then
-            mv backend.tf.bak backend.tf
-          fi
-
-      - name: Comment Plan Output
-        if: steps.command.outputs.command == 'plan'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: terraform-plan
-          message: |
-            ### 🧾 Terraform Plan (No Backend)
-            ✅ Successfully ran `terraform plan` **without backend**.
-            ```
-            ${{ steps.plan.outputs.stdout }}
-            ```
-            To apply changes, comment `/apply`.
-
-      # Terraform Apply (with backend configured)
-      - name: Terraform Apply
-        if: steps.command.outputs.command == 'apply'
-        run: |
-          echo "🚀 Running Terraform Apply"
-          cd terraform_infra
-          terraform init -input=false -reconfigure
-          terraform apply -auto-approve -no-color
-
-      - name: Comment Apply Result
-        if: steps.command.outputs.command == 'apply'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: terraform-apply
-          message: |
-            ### ✅ Terraform Apply Completed
-            Infrastructure applied successfully!
+      - name: Destroy Complete
+        run: echo "✅ Infrastructure destroy completed successfully."
