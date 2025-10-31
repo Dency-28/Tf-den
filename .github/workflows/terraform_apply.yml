@@ -65,20 +65,11 @@ jobs:
         run: |
           set -e
           echo "🧩 Running Terraform Plan (Skipping backend init)"
-
           mkdir tf_local
           cp -r terraform_infra/* tf_local/
 
-          # Remove backend block safely before init
-          cat > /tmp/remove_backend.py <<'PY'
-import re, glob
-for f in glob.glob("tf_local/**/*.tf", recursive=True):
-    text = open(f).read()
-    new = re.sub(r'terraform\s*\{[^{}]*backend\s*"s3"\s*\{[^{}]*\}[^{}]*\}', '', text, flags=re.S)
-    if new != text:
-        open(f, 'w').write(new)
-PY
-          python3 /tmp/remove_backend.py
+          echo "📦 Removing backend block from Terraform configs..."
+          find tf_local -name "*.tf" -type f -exec sed -i '/backend "s3"/,/}/d' {} \;
 
           cd tf_local
           terraform init -backend=false -input=false -no-color
