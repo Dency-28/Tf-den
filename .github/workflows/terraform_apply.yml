@@ -23,24 +23,28 @@ jobs:
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' && (contains(github.event.comment.body, '/plan') || contains(github.event.comment.body, '/apply')))
 
+    env:
+      AWS_REGION: us-east-1
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.8
 
-      - name: Configure AWS Credentials
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Terraform Init (with backend)
         run: |
+          echo "⚙️ Initializing Terraform with backend..."
           cd terraform_infra
           terraform init -reconfigure -input=false
 
@@ -53,9 +57,9 @@ jobs:
         if: contains(github.event.comment.body, '/plan') || github.event_name == 'pull_request'
         id: plan
         run: |
-          echo "🧩 Running Terraform Plan (Backend Enabled)"
+          echo "🧩 Running Terraform Plan with backend..."
           cd terraform_infra
-          terraform plan -no-color -input=false > plan.txt
+          terraform plan -no-color -out=tfplan > plan.txt
           {
             echo '### 🧩 Terraform Plan Result'
             echo '<details><summary>Click to view full plan logs</summary>'
@@ -76,5 +80,6 @@ jobs:
       - name: Terraform Apply
         if: contains(github.event.comment.body, '/apply')
         run: |
+          echo "🚀 Running Terraform Apply..."
           cd terraform_infra
           terraform apply -auto-approve -input=false
