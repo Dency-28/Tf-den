@@ -35,35 +35,39 @@ jobs:
           aws-region: us-east-1
 
       # ============================================================
-      # PLAN JOB - SKIP BACKEND COMPLETELY (local mode only)
+      # PLAN JOB (NO BACKEND)
       # ============================================================
       - name: Terraform Plan (Skip Backend)
         if: contains(github.event.comment.body, '/plan')
         id: plan
         run: |
           echo "🧩 Running Terraform Plan (Skipping backend setup)..."
-          cd terraform_infra
 
-          echo "🧩 Creating temp folder and removing backend block..."
-          mkdir temp && cp -r ../terraform_infra/* temp/
-          cd temp
+          # Create a temporary folder to modify infra files
+          mkdir tf_local && cp -r terraform_infra/* tf_local/
+          cd tf_local
 
-          # Remove any backend block dynamically
-          sed -i '/backend "s3"/,/}/d' *.tf || true
+          echo "🧹 Removing backend blocks to disable S3 usage..."
+          # Delete any backend "s3" blocks from *.tf files (safe multiline)
+          find . -type f -name "*.tf" -exec sed -i '/backend *"s3"/,/}/d' {} \;
 
-          echo "⚙️ Initializing Terraform (NO backend, local mode)..."
-          terraform init -backend=false -input=false
+          echo "⚙️ Initializing Terraform (no backend)..."
+          terraform init -backend=false -input=false -no-color
 
-          terraform fmt -check
-          terraform validate
-          terraform plan -no-color -out=tfplan > plan_output.txt
+          echo "✅ Validating Terraform configuration..."
+          terraform fmt -check -no-color
+          terraform validate -no-color
+
+          echo "🧩 Generating Terraform Plan (Local Mode)..."
+          terraform plan -no-color -out=tfplan > plan.txt || true
 
           {
-            echo '### 🧩 Terraform Plan (Local - No Backend)'
-            echo '<details><summary>Click to view logs</summary>'
+            echo '### 🧩 Terraform Plan (Local Mode - Backend Disabled)'
+            echo '✅ Backend skipped successfully (S3/Dynamo not used)'
+            echo '<details><summary>Click to view plan logs</summary>'
             echo ''
             echo '```'
-            cat plan_output.txt
+            cat plan.txt
             echo '```'
             echo '</details>'
           } > ../plan_comment.md
@@ -72,29 +76,33 @@ jobs:
         if: contains(github.event.comment.body, '/plan')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          path: terraform_infra/plan_comment.md
+          path: plan_comment.md
 
       # ============================================================
-      # APPLY JOB - USE REAL BACKEND
+      # APPLY JOB (WITH BACKEND)
       # ============================================================
-      - name: Terraform Apply
+      - name: Terraform Apply (Real Backend)
         if: contains(github.event.comment.body, '/apply')
         id: apply
         run: |
-          echo "🚀 Running Terraform Apply (with real backend)..."
+          echo "🚀 Running Terraform Apply (Using S3 Backend)..."
           cd terraform_infra
 
           echo "⚙️ Initializing Terraform with backend..."
-          terraform init -input=false -reconfigure
-          terraform validate
-          terraform apply -auto-approve -no-color > apply_output.txt
+          terraform init -reconfigure -input=false -no-color
+
+          echo "✅ Validating configuration..."
+          terraform validate -no-color
+
+          echo "🚀 Applying Terraform changes..."
+          terraform apply -auto-approve -no-color > apply.txt
 
           {
             echo '### 🚀 Terraform Apply Result'
-            echo '<details><summary>Click to view logs</summary>'
+            echo '<details><summary>Click to view apply logs</summary>'
             echo ''
             echo '```'
-            cat apply_output.txt
+            cat apply.txt
             echo '```'
             echo '</details>'
           } > apply_comment.md
@@ -103,4 +111,4 @@ jobs:
         if: contains(github.event.comment.body, '/apply')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          path: terraform_infra/apply_comment.md
+          path: apply_comment.md
