@@ -1,13 +1,8 @@
-name: Terraform CI/CD
+name: Terraform CI/CD (Full Workflow)
 
 on:
-  pull_request:
-    branches:
-      - main
-      - testing
   issue_comment:
-    types:
-      - created
+    types: [created]
   workflow_dispatch:
 
 permissions:
@@ -17,47 +12,42 @@ permissions:
 
 jobs:
   terraform:
-    # Trigger only if comment contains /apply AND it is on a PR
     if: |
       github.event.issue.pull_request != '' &&
       contains(github.event.comment.body, '/apply')
-    name: Terraform Apply Full Pipeline (PR Trigger)
+    name: Full Terraform Plan & Apply
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
 
     steps:
-      # Step 1️⃣ Checkout repository
+      # Step 1️⃣ Checkout repo
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       # Step 2️⃣ Setup Terraform
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
       # Step 3️⃣ Configure AWS credentials
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ───────────────────────────────
-      # Step 4️⃣ Terraform Backend
-      # ───────────────────────────────
+      # Step 4️⃣ Init + Apply backend
       - name: Terraform Init (Backend)
         run: terraform -chdir=terraform_backend init
 
       - name: Terraform Apply (Backend)
         run: terraform -chdir=terraform_backend apply -auto-approve
 
-      # ───────────────────────────────
-      # Step 5️⃣ Terraform Infra
-      # ───────────────────────────────
+      # Step 5️⃣ Infra Init + Validate + Plan
       - name: Terraform Init (Infra)
         run: terraform -chdir=terraform_infra init -reconfigure
 
@@ -66,37 +56,44 @@ jobs:
 
       - name: Terraform Plan (Infra)
         id: plan
-        run: terraform -chdir=terraform_infra plan -no-color
+        run: terraform -chdir=terraform_infra plan -no-color -out=tfplan.txt | tee plan.log
 
-      - name: Terraform Apply (Infra)
-        id: apply
-        run: terraform -chdir=terraform_infra apply -auto-approve -no-color
-
-      - name: Terraform Output (Infra)
-        id: output
-        run: terraform -chdir=terraform_infra output -no-color
-
-      # ───────────────────────────────
-      # Step 6️⃣ Post Result to PR Comment
-      # ───────────────────────────────
-      - name: Post Terraform Result to PR
+      # Step 6️⃣ Post PLAN result to PR comment
+      - name: Post Terraform PLAN Result
         uses: peter-evans/create-or-update-comment@v3
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
-            🚀 **Terraform Apply Completed Successfully**
+            🧩 **Terraform PLAN Result**
+            ```
+            ${{ steps.plan.outputs.stdout || '' }}
+            ```
+            ✅ If everything looks good, proceeding to apply...
 
-            ### 🧩 Plan Summary
+      # Step 7️⃣ Terraform APPLY
+      - name: Terraform Apply (Infra)
+        id: apply
+        run: terraform -chdir=terraform_infra apply -auto-approve tfplan.txt | tee apply.log
+
+      # Step 8️⃣ Terraform OUTPUT
+      - name: Terraform Output (Infra)
+        id: output
+        run: terraform -chdir=terraform_infra output -no-color | tee output.log
+
+      # Step 9️⃣ Post APPLY result to PR comment
+      - name: Post Terraform APPLY Result
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            🚀 **Terraform APPLY Completed Successfully**
+            
+            ### 🌐 Outputs:
             ```
-            ${{ steps.plan.outputs.stdout }}
+            ${{ steps.output.outputs.stdout || '' }}
             ```
 
-            ### ✅ Apply Output
+            ✅ Apply log attached:
             ```
-            ${{ steps.apply.outputs.stdout }}
-            ```
-
-            ### 🌐 Terraform Outputs
-            ```
-            ${{ steps.output.outputs.stdout }}
+            ${{ steps.apply.outputs.stdout || '' }}
             ```
