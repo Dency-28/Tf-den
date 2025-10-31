@@ -1,131 +1,102 @@
-name: Terraform CI/CD
+name: Terraform CI/CD (Testing Branch)
 
 on:
   pull_request:
     branches:
       - testing
-      - main
   issue_comment:
-    types:
-      - created
+    types: [created]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply (Test)
+    name: Terraform Plan & Apply (PR Trigger)
     runs-on: ubuntu-latest
 
-    env:
-      AWS_REGION: us-east-1
-
     steps:
-      # ─── Checkout Code ───
-      - uses: actions/checkout@v4
+      - name: Checkout Repo
+        uses: actions/checkout@v4
 
-      # ─── Setup Terraform ───
-      - uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # ─── Configure AWS credentials ───
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: us-east-1
 
-      # ─── Get Pull Request Number ───
-      - id: pr
-        uses: jwalton/gh-find-current-pr@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          state: open
-
-      # ───────────────────────────────────────────────
-      # 🧩 Terraform PLAN (No backend, local only)
-      # ───────────────────────────────────────────────
-      - name: Terraform Plan
+      # 🧩 Terraform PLAN - Run locally only, no backend, never creates S3 or Dynamo
+      - name: Terraform Plan (No Backend)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
-        id: plan
         run: |
-          echo "🧩 Starting Terraform Plan (local only, backend skipped)..."
+          echo "🧩 Running Terraform PLAN in terraform_infra folder (no backend)..."
+
+          cd terraform_infra
 
           # Temporarily disable backend
-          if [ -f terraform_infra/backend.tf ]; then
-            mv terraform_infra/backend.tf terraform_infra/backend.tf.bak
-            echo "✅ backend.tf temporarily renamed to backend.tf.bak"
-          fi
+          mv backend.tf backend.tf.bak
 
-          # Init Terraform locally without backend
-          terraform -chdir=terraform_infra init -backend=false -input=false
+          terraform init -backend=false
+          terraform validate
+          terraform plan -no-color > ../plan_output.txt
 
-          terraform -chdir=terraform_infra fmt -check
-          terraform -chdir=terraform_infra validate
+          # Restore backend.tf
+          mv backend.tf.bak backend.tf
 
-          # Run plan (local, backend skipped)
-          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan.txt
-
-          # Restore backend file
-          if [ -f terraform_infra/backend.tf.bak ]; then
-            mv terraform_infra/backend.tf.bak terraform_infra/backend.tf
-            echo "🔁 backend.tf restored"
-          fi
-
+          cd ..
           {
-            echo '### 🧩 Terraform Plan Result'
-            echo '<details><summary>Click to view full plan logs</summary>'
-            echo ''
+            echo '### 🧩 Terraform Plan Output (Local Only)'
             echo '```'
-            cat plan.txt
+            cat plan_output.txt
             echo '```'
-            echo '</details>'
           } > plan_comment.md
 
-      # ─── Post Plan Output to PR ───
       - name: Post Plan Output to PR
-        if: steps.plan.conclusion == 'success' && steps.pr.outputs.number != ''
+        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number }}
           header: 🧩 Terraform Plan Output
           path: plan_comment.md
           recreate: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ───────────────────────────────────────────────
-      # 🚀 Terraform APPLY (normal apply if backend exists)
-      # ───────────────────────────────────────────────
-      - name: Terraform Apply
+      # 🚀 Terraform APPLY - Still local, no backend
+      - name: Terraform Apply (No Backend)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
-        id: apply
         run: |
-          echo "🚀 Running Terraform Apply..."
+          echo "🚀 Running Terraform APPLY in terraform_infra folder (no backend)..."
 
-          terraform -chdir=terraform_infra init -input=false
-          terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
+          cd terraform_infra
+
+          mv backend.tf backend.tf.bak
+
+          terraform init -backend=false
+          terraform apply -auto-approve -no-color > ../apply_output.txt
+
+          mv backend.tf.bak backend.tf
+          cd ..
 
           {
-            echo '### 🚀 Terraform Apply Result'
-            echo '<details><summary>Click to view full apply logs</summary>'
-            echo ''
+            echo '### 🚀 Terraform Apply Output (Local Only)'
             echo '```'
-            cat apply.txt
+            cat apply_output.txt
             echo '```'
-            echo '</details>'
           } > apply_comment.md
 
-      # ─── Post Apply Output to PR ───
       - name: Post Apply Output to PR
-        if: steps.apply.conclusion == 'success' && steps.pr.outputs.number != ''
+        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number }}
           header: 🚀 Terraform Apply Output
           path: apply_comment.md
           recreate: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
