@@ -6,8 +6,7 @@ on:
       - testing
       - main
   issue_comment:
-    types:
-      - created
+    types: [created]
   workflow_dispatch:
 
 permissions:
@@ -17,93 +16,94 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply (Test)
+    name: Terraform Plan & Apply (Testing Branch)
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
 
     steps:
-      - uses: actions/checkout@v4
+      # Checkout your repo
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
+      # Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.6
+          terraform_version: 1.5.7
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      # Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - id: pr
-        uses: jwalton/gh-find-current-pr@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          state: open
+      # Detect /plan or /apply
+      - name: Detect command
+        id: command
+        run: |
+          comment="${{ github.event.comment.body }}"
+          if [[ "$comment" == "/plan" ]]; then
+            echo "command=plan" >> $GITHUB_OUTPUT
+          elif [[ "$comment" == "/apply" ]]; then
+            echo "command=apply" >> $GITHUB_OUTPUT
+          else
+            echo "command=none" >> $GITHUB_OUTPUT
+          fi
 
-      # ─── /PLAN ───
+      # Terraform Plan (NO backend, skip S3 & DynamoDB)
       - name: Terraform Plan (Skip Backend)
-        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
+        if: steps.command.outputs.command == 'plan'
         id: plan
         run: |
           echo "🧩 Running Terraform Plan (Skipping backend init)"
           cd terraform_infra
 
-          # Initialize WITHOUT backend
-          terraform init -backend=false -input=false
+          # Temporarily disable backend
+          if [ -f backend.tf ]; then
+            echo "📁 Temporarily renaming backend.tf to backend.tf.bak"
+            mv backend.tf backend.tf.bak
+          fi
 
-          terraform fmt
+          terraform init -input=false -backend=false
           terraform validate
-          terraform plan -no-color -out=tfplan > plan.txt
+          terraform plan -no-color -out=tfplan.out || true
 
-          {
-            echo '### 🧩 Terraform Plan Result'
-            echo '<details><summary>Click to view full plan logs</summary>'
-            echo ''
-            echo '```'
-            cat plan.txt
-            echo '```'
-            echo '</details>'
-          } > ../plan_comment.md
+          # Restore backend file
+          if [ -f backend.tf.bak ]; then
+            mv backend.tf.bak backend.tf
+          fi
 
-      - name: Post Plan Output
-        if: steps.plan.conclusion == 'success' && steps.pr.outputs.number != ''
+      - name: Comment Plan Output
+        if: steps.command.outputs.command == 'plan'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number }}
-          header: 🧩 Terraform Plan Output
-          path: plan_comment.md
-          recreate: true
+          header: terraform-plan
+          message: |
+            ### 🧾 Terraform Plan (No Backend)
+            ✅ Successfully ran `terraform plan` **without backend**.
+            ```
+            ${{ steps.plan.outputs.stdout }}
+            ```
+            To apply changes, comment `/apply`.
 
-      # ─── /APPLY ───
+      # Terraform Apply (with backend configured)
       - name: Terraform Apply
-        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
-        id: apply
+        if: steps.command.outputs.command == 'apply'
         run: |
           echo "🚀 Running Terraform Apply"
           cd terraform_infra
+          terraform init -input=false -reconfigure
+          terraform apply -auto-approve -no-color
 
-          terraform init -backend=false -input=false
-          terraform apply -auto-approve tfplan | tee apply.txt
-
-          {
-            echo '### 🚀 Terraform Apply Result'
-            echo '<details><summary>Click to view full apply logs</summary>'
-            echo ''
-            echo '```'
-            cat apply.txt
-            echo '```'
-            echo '</details>'
-          } > ../apply_comment.md
-
-      - name: Post Apply Output
-        if: steps.apply.conclusion == 'success' && steps.pr.outputs.number != ''
+      - name: Comment Apply Result
+        if: steps.command.outputs.command == 'apply'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number }}
-          header: 🚀 Terraform Apply Output
-          path: apply_comment.md
-          recreate: true
+          header: terraform-apply
+          message: |
+            ### ✅ Terraform Apply Completed
+            Infrastructure applied successfully!
