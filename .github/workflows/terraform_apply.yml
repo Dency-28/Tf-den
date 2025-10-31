@@ -17,20 +17,18 @@ permissions:
 
 jobs:
   terraform:
+    # Trigger only if it's a comment on a PR and comment contains /apply
     if: |
       github.event.issue.pull_request != '' &&
-      (
-        contains(github.event.comment.body, '/plan') ||
-        contains(github.event.comment.body, '/apply')
-      )
-    name: Terraform Plan & Apply (PR Trigger)
+      contains(github.event.comment.body, '/apply')
+    name: Terraform Full Apply (PR Trigger)
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
 
     steps:
-      # Step 1️⃣ Checkout
+      # Step 1️⃣ Checkout repo
       - name: Checkout repository
         uses: actions/checkout@v3
 
@@ -40,7 +38,7 @@ jobs:
         with:
           terraform_version: 1.6.6
 
-      # Step 3️⃣ Configure AWS
+      # Step 3️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -48,54 +46,56 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 4️⃣ Terraform Backend
+      # ───────────────────────────────
+      # Step 4️⃣ Terraform Backend Setup
+      # ───────────────────────────────
       - name: Terraform Init (Backend)
         run: terraform -chdir=terraform_backend init
 
       - name: Terraform Apply (Backend)
         run: terraform -chdir=terraform_backend apply -auto-approve
 
-      # Step 5️⃣ Terraform Infra Init
+      # ───────────────────────────────
+      # Step 5️⃣ Terraform Infra Setup
+      # ───────────────────────────────
       - name: Terraform Init (Infra)
         run: terraform -chdir=terraform_infra init -reconfigure
 
       - name: Terraform Validate (Infra)
         run: terraform -chdir=terraform_infra validate
 
-      # Step 6️⃣ Terraform Plan or Apply based on comment
       - name: Terraform Plan (Infra)
-        if: contains(github.event.comment.body, '/plan')
         id: plan
         run: terraform -chdir=terraform_infra plan -no-color
 
-      - name: Post Plan Result to PR
-        if: contains(github.event.comment.body, '/plan')
-        uses: peter-evans/create-or-update-comment@v3
-        with:
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            🪄 **Terraform Plan Result:**
-            ```
-            ${{ steps.plan.outputs.stdout }}
-            ```
-
       - name: Terraform Apply (Infra)
-        if: contains(github.event.comment.body, '/apply')
         id: apply
         run: terraform -chdir=terraform_infra apply -auto-approve -no-color
 
+      # ───────────────────────────────
+      # Step 6️⃣ Terraform Output
+      # ───────────────────────────────
+      - name: Terraform Output
+        id: output
+        run: terraform -chdir=terraform_infra output -no-color
+
+      # ───────────────────────────────
+      # Step 7️⃣ Post Result to PR Comment
+      # ───────────────────────────────
       - name: Post Apply Result to PR
-        if: contains(github.event.comment.body, '/apply')
         uses: peter-evans/create-or-update-comment@v3
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
-            🚀 **Terraform Apply Result:**
+            🚀 **Terraform Apply Result (Full Pipeline)**
+
+            ✅ Backend + Infra successfully applied
+
             ```
             ${{ steps.apply.outputs.stdout }}
             ```
 
-      # Step 7️⃣ Show Outputs (like EC2 IP, RDS Endpoint)
-      - name: Terraform Output
-        if: contains(github.event.comment.body, '/apply')
-        run: terraform -chdir=terraform_infra output
+            🌐 **Outputs:**
+            ```
+            ${{ steps.output.outputs.stdout }}
+            ```
