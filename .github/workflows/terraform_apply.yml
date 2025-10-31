@@ -1,4 +1,4 @@
-name: Terraform CI/CD
+name: Terraform CI/CD (Test Branch)
 
 on:
   pull_request:
@@ -16,15 +16,14 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply (Testing Branch)
-    name: Terraform Plan & Apply (Test)
+    name: Terraform Plan & Apply (No Backend for /plan)
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
 
     steps:
-      # Checkout your repo
+      # Checkout the repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -37,19 +36,12 @@ jobs:
       # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.6
-
-      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Detect /plan or /apply
+      # Detect which comment triggered it (/plan or /apply)
       - name: Detect command
         id: command
         run: |
@@ -62,36 +54,27 @@ jobs:
             echo "command=none" >> $GITHUB_OUTPUT
           fi
 
-      # Terraform Plan (NO backend, skip S3 & DynamoDB)
+      # Run Terraform Plan (NO backend)
       - name: Terraform Plan (Skip Backend)
         if: steps.command.outputs.command == 'plan'
-      - id: pr
-        uses: jwalton/gh-find-current-pr@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          state: open
-
-      # ─── /PLAN ───
-      - name: Terraform Plan (Skip Backend)
-        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
         id: plan
         run: |
-          echo "🧩 Running Terraform Plan (Skipping backend init)"
+          echo "🧩 Running Terraform Plan without backend"
           cd terraform_infra
 
-          # Temporarily disable backend
+          # Temporarily remove backend.tf so Terraform never sees S3 backend
           if [ -f backend.tf ]; then
-            echo "📁 Temporarily renaming backend.tf to backend.tf.bak"
-            mv backend.tf backend.tf.bak
+            echo "📦 Temporarily disabling backend.tf"
+            mv backend.tf backend.tf.disabled
           fi
 
           terraform init -input=false -backend=false
           terraform validate
-          terraform plan -no-color -out=tfplan.out || true
+          terraform plan -no-color || true
 
-          # Restore backend file
-          if [ -f backend.tf.bak ]; then
-            mv backend.tf.bak backend.tf
+          # Restore backend.tf for future runs
+          if [ -f backend.tf.disabled ]; then
+            mv backend.tf.disabled backend.tf
           fi
 
       - name: Comment Plan Output
@@ -100,18 +83,16 @@ jobs:
         with:
           header: terraform-plan
           message: |
-            ### 🧾 Terraform Plan (No Backend)
-            ✅ Successfully ran `terraform plan` **without backend**.
-            ```
-            ${{ steps.plan.outputs.stdout }}
-            ```
+            ### 🧾 Terraform Plan (Backend Disabled)
+            ✅ Terraform Plan executed successfully without S3 or DynamoDB backend.
+            Plan output logged above.
             To apply changes, comment `/apply`.
 
-      # Terraform Apply (with backend configured)
-      - name: Terraform Apply
+      # Run Terraform Apply (uses real backend)
+      - name: Terraform Apply (With Backend)
         if: steps.command.outputs.command == 'apply'
         run: |
-          echo "🚀 Running Terraform Apply"
+          echo "🚀 Running Terraform Apply (with backend)"
           cd terraform_infra
           terraform init -input=false -reconfigure
           terraform apply -auto-approve -no-color
@@ -123,61 +104,4 @@ jobs:
           header: terraform-apply
           message: |
             ### ✅ Terraform Apply Completed
-            Infrastructure applied successfully!
-          # Initialize WITHOUT backend
-          terraform init -backend=false -input=false
-
-          terraform fmt
-          terraform validate
-          terraform plan -no-color -out=tfplan > plan.txt
-
-          {
-            echo '### 🧩 Terraform Plan Result'
-            echo '<details><summary>Click to view full plan logs</summary>'
-            echo ''
-            echo '```'
-            cat plan.txt
-            echo '```'
-            echo '</details>'
-          } > ../plan_comment.md
-
-      - name: Post Plan Output
-        if: steps.plan.conclusion == 'success' && steps.pr.outputs.number != ''
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number }}
-          header: 🧩 Terraform Plan Output
-          path: plan_comment.md
-          recreate: true
-
-      # ─── /APPLY ───
-      - name: Terraform Apply
-        if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
-        id: apply
-        run: |
-          echo "🚀 Running Terraform Apply"
-          cd terraform_infra
-
-          terraform init -backend=false -input=false
-          terraform apply -auto-approve tfplan | tee apply.txt
-
-          {
-            echo '### 🚀 Terraform Apply Result'
-            echo '<details><summary>Click to view full apply logs</summary>'
-            echo ''
-            echo '```'
-            cat apply.txt
-            echo '```'
-            echo '</details>'
-          } > ../apply_comment.md
-
-      - name: Post Apply Output
-        if: steps.apply.conclusion == 'success' && steps.pr.outputs.number != ''
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number }}
-          header: 🚀 Terraform Apply Output
-          path: apply_comment.md
-          recreate: true
+            Infrastructure applied successfully.
