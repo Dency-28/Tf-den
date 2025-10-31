@@ -1,4 +1,4 @@
-name: Terraform CI/CD (Full Workflow)
+name: Terraform CI/CD (Full Apply on /apply)
 
 on:
   issue_comment:
@@ -15,7 +15,7 @@ jobs:
     if: |
       github.event.issue.pull_request != '' &&
       contains(github.event.comment.body, '/apply')
-    name: Full Terraform Plan & Apply
+    name: Terraform Plan & Apply (Full Run)
     runs-on: ubuntu-latest
 
     env:
@@ -29,8 +29,6 @@ jobs:
       # Step 2️⃣ Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.6
 
       # Step 3️⃣ Configure AWS credentials
       - name: Configure AWS credentials
@@ -40,60 +38,69 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 4️⃣ Init + Apply backend
-      - name: Terraform Init (Backend)
-        run: terraform -chdir=terraform_backend init
+      # Step 4️⃣ Initialize backend and apply backend
+      - name: Init backend
+        run: terraform -chdir=terraform_backend init -reconfigure
 
-      - name: Terraform Apply (Backend)
+      - name: Apply backend
         run: terraform -chdir=terraform_backend apply -auto-approve
 
-      # Step 5️⃣ Infra Init + Validate + Plan
-      - name: Terraform Init (Infra)
+      # Step 5️⃣ Initialize and validate infra
+      - name: Init infra
         run: terraform -chdir=terraform_infra init -reconfigure
 
-      - name: Terraform Validate (Infra)
+      - name: Validate infra
         run: terraform -chdir=terraform_infra validate
 
+      # Step 6️⃣ Full plan (no skip anymore)
       - name: Terraform Plan (Infra)
         id: plan
-        run: terraform -chdir=terraform_infra plan -no-color -out=tfplan.txt | tee plan.log
+        run: |
+          terraform -chdir=terraform_infra plan -no-color -out=tfplan.txt | tee plan.log
 
-      # Step 6️⃣ Post PLAN result to PR comment
-      - name: Post Terraform PLAN Result
+      # Step 7️⃣ Post plan result to PR
+      - name: Post Terraform Plan to PR
         uses: peter-evans/create-or-update-comment@v3
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
             🧩 **Terraform PLAN Result**
             ```
-            ${{ steps.plan.outputs.stdout || '' }}
+            $(cat terraform_infra/plan.log)
             ```
-            ✅ If everything looks good, proceeding to apply...
+            ✅ Proceeding with Apply...
 
-      # Step 7️⃣ Terraform APPLY
+      # Step 8️⃣ Apply infra
       - name: Terraform Apply (Infra)
         id: apply
         run: terraform -chdir=terraform_infra apply -auto-approve tfplan.txt | tee apply.log
 
-      # Step 8️⃣ Terraform OUTPUT
-      - name: Terraform Output (Infra)
+      # Step 9️⃣ Get all outputs and save public IP separately
+      - name: Get Terraform Outputs
         id: output
-        run: terraform -chdir=terraform_infra output -no-color | tee output.log
+        run: |
+          terraform -chdir=terraform_infra output -no-color | tee output.log
+          terraform -chdir=terraform_infra output -raw public_ip > public_ip.txt || echo "No IP output"
 
-      # Step 9️⃣ Post APPLY result to PR comment
-      - name: Post Terraform APPLY Result
+      # Step 🔟 Post apply result + IP to PR
+      - name: Post Terraform Apply Result to PR
         uses: peter-evans/create-or-update-comment@v3
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
             🚀 **Terraform APPLY Completed Successfully**
-            
-            ### 🌐 Outputs:
+
+            ### 🌍 Outputs:
             ```
-            ${{ steps.output.outputs.stdout || '' }}
+            $(cat terraform_infra/output.log)
             ```
 
-            ✅ Apply log attached:
+            ### 🌐 Public IP:
             ```
-            ${{ steps.apply.outputs.stdout || '' }}
+            $(cat terraform_infra/public_ip.txt)
+            ```
+
+            ### 🪄 Apply Log (Last 40 lines):
+            ```
+            $(tail -n 40 terraform_infra/apply.log)
             ```
