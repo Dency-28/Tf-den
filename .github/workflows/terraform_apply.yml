@@ -47,21 +47,19 @@ jobs:
         if: ${{ steps.detect.outputs.action == 'none' }}
         run: echo "No action required."
 
-      - name: 🗂️ Set Working Directory
+      # 🔹 Define Terraform directory (change this if needed)
+      - name: 🗂️ Define Terraform Working Directory
         id: setdir
         run: |
-          if [[ "${{ steps.detect.outputs.action }}" == "apply" ]]; then
-            echo "dir=terraform_backend" >> $GITHUB_OUTPUT
-          else
-            echo "dir=terraform_infra" >> $GITHUB_OUTPUT
-          fi
+          # 👇 change this to match your real folder name
+          echo "dir=terraform_infra" >> $GITHUB_OUTPUT
 
-      # 🔹 PLAN MODE: No backend init, use -backend=false
-      - name: 🧠 Terraform Init (no backend)
+      # 🔹 PLAN MODE: no backend
+      - name: ⚙️ Terraform Init (No Backend)
         if: ${{ steps.detect.outputs.action == 'plan' }}
         run: |
           cd ${{ steps.setdir.outputs.dir }}
-          echo "⚙️ Initializing Terraform (Skipping Backend)..."
+          echo "⚙️ Initializing Terraform (Skipping backend)..."
           terraform init -backend=false -input=false
 
       - name: 📖 Terraform Validate
@@ -72,11 +70,10 @@ jobs:
 
       - name: 🧩 Terraform Plan
         if: ${{ steps.detect.outputs.action == 'plan' }}
-        id: plan
         run: |
           cd ${{ steps.setdir.outputs.dir }}
-          terraform plan -input=false -no-color > plan.txt
-          cat plan.txt
+          echo "🧩 Running Terraform Plan (Skipping backend)"
+          terraform plan -no-color -input=false | tee plan.txt
 
       - name: 💬 Comment Plan on PR
         if: ${{ steps.detect.outputs.action == 'plan' }}
@@ -85,12 +82,12 @@ jobs:
           header: terraform-plan
           path: ${{ steps.setdir.outputs.dir }}/plan.txt
 
-      # 🔹 APPLY MODE: Uses real backend (S3 + Dynamo)
-      - name: ⚙️ Terraform Init (with backend)
+      # 🔹 APPLY MODE: with backend
+      - name: ⚙️ Terraform Init (With Backend)
         if: ${{ steps.detect.outputs.action == 'apply' }}
         run: |
           cd ${{ steps.setdir.outputs.dir }}
-          echo "⚙️ Initializing Terraform with Backend..."
+          echo "⚙️ Initializing Terraform with backend..."
           terraform init -input=false
 
       - name: 🚀 Terraform Apply
