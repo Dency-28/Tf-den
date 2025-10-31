@@ -34,23 +34,27 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      # 🧩 Terraform PLAN - Run locally only, no backend, never creates S3 or Dynamo
-      - name: Terraform Plan (No Backend)
+      # 🧩 PLAN
+      - name: Terraform Plan (Completely Local)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
         run: |
-          echo "🧩 Running Terraform PLAN in terraform_infra folder (no backend)..."
-
+          echo "🧩 Running Terraform PLAN locally (No backend, no S3, no Dynamo)..."
           cd terraform_infra
 
-          # Temporarily disable backend
-          mv backend.tf backend.tf.bak
+          # Completely disable backend by removing the file before init
+          if [ -f backend.tf ]; then
+            echo "Temporarily removing backend.tf"
+            mv backend.tf ../backend.tf.disabled
+          fi
 
-          terraform init -backend=false
+          terraform init -input=false
           terraform validate
           terraform plan -no-color > ../plan_output.txt
 
           # Restore backend.tf
-          mv backend.tf.bak backend.tf
+          if [ -f ../backend.tf.disabled ]; then
+            mv ../backend.tf.disabled backend.tf
+          fi
 
           cd ..
           {
@@ -69,22 +73,26 @@ jobs:
           recreate: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 🚀 Terraform APPLY - Still local, no backend
-      - name: Terraform Apply (No Backend)
+      # 🚀 APPLY
+      - name: Terraform Apply (Completely Local)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         run: |
-          echo "🚀 Running Terraform APPLY in terraform_infra folder (no backend)..."
-
+          echo "🚀 Running Terraform APPLY locally (No backend, no S3, no Dynamo)..."
           cd terraform_infra
 
-          mv backend.tf backend.tf.bak
+          if [ -f backend.tf ]; then
+            echo "Temporarily removing backend.tf"
+            mv backend.tf ../backend.tf.disabled
+          fi
 
-          terraform init -backend=false
+          terraform init -input=false
           terraform apply -auto-approve -no-color > ../apply_output.txt
 
-          mv backend.tf.bak backend.tf
-          cd ..
+          if [ -f ../backend.tf.disabled ]; then
+            mv ../backend.tf.disabled backend.tf
+          fi
 
+          cd ..
           {
             echo '### 🚀 Terraform Apply Output (Local Only)'
             echo '```'
