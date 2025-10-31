@@ -1,27 +1,40 @@
-name: Terraform Infra Destroy
+name: Terraform CI/CD
 
 on:
+  pull_request:
+    branches:
+      - testing
+      - main
+  issue_comment:
+    types:
+      - created
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
-  destroy:
-    name: Destroy Terraform Infrastructure
+  terraform:
+    name: Terraform Plan & Apply (Testing Branch)
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
-      S3_BUCKET: tf-state-dency
-      DYNAMO_TABLE: tf-state-locks
 
     steps:
+      # Checkout your repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.5.7
 
+      # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -29,13 +42,51 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Init
-        working-directory: terraform_infra
-        run: terraform init -input=false -reconfigure
+      # Terraform Init (no backend — backend already created)
+      - name: Terraform Init (Infra only)
+        run: terraform -chdir=terraform_infra init -input=false -backend=false
 
-      - name: Terraform Destroy
-        working-directory: terraform_infra
-        run: terraform destroy -auto-approve
+      # Detect /plan or /apply comment and store result
+      - name: Set command type
+        id: command
+        run: |
+          if [[ "${{ github.event.comment.body }}" == "/plan" ]]; then
+            echo "command=plan" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event.comment.body }}" == "/apply" ]]; then
+            echo "command=apply" >> $GITHUB_OUTPUT
+          else
+            echo "command=none" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Destroy Complete
-        run: echo "✅ Infrastructure destroy completed successfully."
+      # Terraform Plan (show output in PR)
+      - name: Terraform Plan
+        if: steps.command.outputs.command == 'plan'
+        id: plan
+        run: terraform -chdir=terraform_infra plan -no-color
+        continue-on-error: true
+
+      - name: Comment Plan Output
+        if: steps.command.outputs.command == 'plan'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: terraform-plan
+          message: |
+            ### 🧾 Terraform Plan Result
+            ```
+            ${{ steps.plan.outputs.stdout }}
+            ```
+            ✅ Run `/apply` to apply these changes.
+
+      # Terraform Apply (run only when /apply comment)
+      - name: Terraform Apply
+        if: steps.command.outputs.command == 'apply'
+        run: terraform -chdir=terraform_infra apply -auto-approve -no-color
+
+      - name: Comment Apply Result
+        if: steps.command.outputs.command == 'apply'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: terraform-apply
+          message: |
+            ### 🚀 Terraform Apply Completed
+            ✅ Infrastructure applied successfully!
