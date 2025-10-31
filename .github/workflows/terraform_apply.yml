@@ -1,9 +1,7 @@
-name: Terraform CI/CD (Testing Branch)
-
+name: Terraform CI/CD 
 on:
   pull_request:
-    branches:
-      - testing
+    branches: [testing]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -15,71 +13,63 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply (Testing)
+    name: Terraform Plan & Apply
     runs-on: ubuntu-latest
 
     if: |
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && 
-      (contains(github.event.comment.body, '/plan') || contains(github.event.comment.body, '/apply')))
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       (contains(github.event.comment.body, '/plan') ||
+        contains(github.event.comment.body, '/apply')))
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.5
+          terraform_version: 1.9.8
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      # -------------------- PLAN --------------------
-      - name: Terraform Init (No Backend)
-        if: contains(github.event.comment.body, '/plan')
-        run: terraform -chdir=terraform_infra init -backend=false
+      - name: Terraform Init (Local, No Backend)
+        run: terraform -chdir=terraform_infra init -backend=false -input=false
 
       - name: Terraform Plan
-        if: contains(github.event.comment.body, '/plan')
         id: plan
-        run: terraform -chdir=terraform_infra plan -no-color
-        continue-on-error: true
-
-      - name: Comment Plan Output in PR
         if: contains(github.event.comment.body, '/plan')
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: terraform-plan
-          message: |
-            ### 🪄 Terraform Plan Result
-            ```
-            ${{ steps.plan.outputs.stdout }}
-            ```
-            ✅ *Plan completed successfully.*
+        run: terraform -chdir=terraform_infra plan -no-color > plan.txt
 
-      # -------------------- APPLY --------------------
-      - name: Terraform Init (Use Backend)
-        if: contains(github.event.comment.body, '/apply')
-        run: terraform -chdir=terraform_infra init
+      - name: Comment Plan Output
+        if: contains(github.event.comment.body, '/plan')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('terraform_infra/plan.txt', 'utf8');
+            const body = '### Terraform Plan Output\n```\n' + output.substring(0, 65000) + '\n```';
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
 
       - name: Terraform Apply
         if: contains(github.event.comment.body, '/apply')
-        id: apply
-        run: terraform -chdir=terraform_infra apply -auto-approve -no-color
+        run: terraform -chdir=terraform_infra apply -auto-approve -input=false -no-color > apply.txt
 
-      - name: Comment Apply Output in PR
+      - name: Comment Apply Output
         if: contains(github.event.comment.body, '/apply')
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: actions/github-script@v7
         with:
-          header: terraform-apply
-          message: |
-            ### 🚀 Terraform Apply Result
-            ```
-            ${{ steps.apply.outputs.stdout }}
-            ```
-            ✅ *Apply completed successfully.*
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('terraform_infra/apply.txt', 'utf8');
+            const body = '### Terraform Apply Output\n```\n' + output.substring(0, 65000) + '\n```';
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
