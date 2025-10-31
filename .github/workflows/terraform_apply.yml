@@ -17,52 +17,64 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply (PR Trigger)
+    name: Terraform Plan & Apply (Test)
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
 
     steps:
-      # Checkout repo
+      # ─── Checkout Code ───
       - uses: actions/checkout@v4
 
-      # Setup Terraform
+      # ─── Setup Terraform ───
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # Configure AWS credentials
+      # ─── Configure AWS credentials ───
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Get PR number
+      # ─── Get Pull Request Number ───
       - id: pr
         uses: jwalton/gh-find-current-pr@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ──────────────────────────────────────────────
-      # 🧩 Run Terraform PLAN when /plan is commented
-      # ──────────────────────────────────────────────
+      # ───────────────────────────────────────────────
+      # 🧩 Terraform PLAN (No backend, local only)
+      # ───────────────────────────────────────────────
       - name: Terraform Plan
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
         id: plan
         run: |
-          echo "=== 🏗️ Starting Backend Setup ==="
-          terraform -chdir=terraform_backend init -input=false
-          terraform -chdir=terraform_backend apply -auto-approve
-          echo "=== ✅ Backend Setup Complete ==="
+          echo "🧩 Starting Terraform Plan (local only, backend skipped)..."
 
-          echo "=== 📋 Starting Infra Plan ==="
-          terraform -chdir=terraform_infra init -reconfigure -input=false
-          terraform -chdir=terraform_infra fmt
+          # Temporarily disable backend
+          if [ -f terraform_infra/backend.tf ]; then
+            mv terraform_infra/backend.tf terraform_infra/backend.tf.bak
+            echo "✅ backend.tf temporarily renamed to backend.tf.bak"
+          fi
+
+          # Init Terraform locally without backend
+          terraform -chdir=terraform_infra init -backend=false -input=false
+
+          terraform -chdir=terraform_infra fmt -check
           terraform -chdir=terraform_infra validate
+
+          # Run plan (local, backend skipped)
           terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan.txt
+
+          # Restore backend file
+          if [ -f terraform_infra/backend.tf.bak ]; then
+            mv terraform_infra/backend.tf.bak terraform_infra/backend.tf
+            echo "🔁 backend.tf restored"
+          fi
 
           {
             echo '### 🧩 Terraform Plan Result'
@@ -74,8 +86,8 @@ jobs:
             echo '</details>'
           } > plan_comment.md
 
-      # Post Plan Output to PR
-      - name: Post Plan Output
+      # ─── Post Plan Output to PR ───
+      - name: Post Plan Output to PR
         if: steps.plan.conclusion == 'success' && steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
@@ -85,15 +97,16 @@ jobs:
           path: plan_comment.md
           recreate: true
 
-      # ──────────────────────────────────────────────
-      # 🚀 Run Terraform APPLY when /apply is commented
-      # ──────────────────────────────────────────────
+      # ───────────────────────────────────────────────
+      # 🚀 Terraform APPLY (normal apply if backend exists)
+      # ───────────────────────────────────────────────
       - name: Terraform Apply
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         id: apply
         run: |
-          echo "=== 🚀 Skipping Backend Setup; Applying Infra Only ==="
-          terraform -chdir=terraform_infra init -reconfigure -input=false
+          echo "🚀 Running Terraform Apply..."
+
+          terraform -chdir=terraform_infra init -input=false
           terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
 
           {
@@ -106,8 +119,8 @@ jobs:
             echo '</details>'
           } > apply_comment.md
 
-      # Post Apply Output to PR
-      - name: Post Apply Output
+      # ─── Post Apply Output to PR ───
+      - name: Post Apply Output to PR
         if: steps.apply.conclusion == 'success' && steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
