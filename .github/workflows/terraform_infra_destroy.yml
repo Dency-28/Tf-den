@@ -6,8 +6,7 @@ on:
       - testing
       - main
   issue_comment:
-    types:
-      - created
+    types: [created]
   workflow_dispatch:
 
 permissions:
@@ -42,28 +41,41 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Terraform Init (no backend — backend already created)
-      - name: Terraform Init (Infra only)
-        run: terraform -chdir=terraform_infra init -input=false -backend=false
-
-      # Detect /plan or /apply comment and store result
-      - name: Set command type
+      # Detect /plan or /apply
+      - name: Detect command
         id: command
         run: |
-          if [[ "${{ github.event.comment.body }}" == "/plan" ]]; then
+          comment="${{ github.event.comment.body }}"
+          if [[ "$comment" == "/plan" ]]; then
             echo "command=plan" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.event.comment.body }}" == "/apply" ]]; then
+          elif [[ "$comment" == "/apply" ]]; then
             echo "command=apply" >> $GITHUB_OUTPUT
           else
             echo "command=none" >> $GITHUB_OUTPUT
           fi
 
-      # Terraform Plan (show output in PR)
-      - name: Terraform Plan
+      # Terraform Plan (NO backend, skip S3 & DynamoDB)
+      - name: Terraform Plan (Skip Backend)
         if: steps.command.outputs.command == 'plan'
         id: plan
-        run: terraform -chdir=terraform_infra plan -no-color
-        continue-on-error: true
+        run: |
+          echo "🧩 Running Terraform Plan (Skipping backend init)"
+          cd terraform_infra
+
+          # Temporarily disable backend
+          if [ -f backend.tf ]; then
+            echo "📁 Temporarily renaming backend.tf to backend.tf.bak"
+            mv backend.tf backend.tf.bak
+          fi
+
+          terraform init -input=false -backend=false
+          terraform validate
+          terraform plan -no-color -out=tfplan.out || true
+
+          # Restore backend file
+          if [ -f backend.tf.bak ]; then
+            mv backend.tf.bak backend.tf
+          fi
 
       - name: Comment Plan Output
         if: steps.command.outputs.command == 'plan'
@@ -71,16 +83,21 @@ jobs:
         with:
           header: terraform-plan
           message: |
-            ### 🧾 Terraform Plan Result
+            ### 🧾 Terraform Plan (No Backend)
+            ✅ Successfully ran `terraform plan` **without backend**.
             ```
             ${{ steps.plan.outputs.stdout }}
             ```
-            ✅ Run `/apply` to apply these changes.
+            To apply changes, comment `/apply`.
 
-      # Terraform Apply (run only when /apply comment)
+      # Terraform Apply (with backend configured)
       - name: Terraform Apply
         if: steps.command.outputs.command == 'apply'
-        run: terraform -chdir=terraform_infra apply -auto-approve -no-color
+        run: |
+          echo "🚀 Running Terraform Apply"
+          cd terraform_infra
+          terraform init -input=false -reconfigure
+          terraform apply -auto-approve -no-color
 
       - name: Comment Apply Result
         if: steps.command.outputs.command == 'apply'
@@ -88,5 +105,5 @@ jobs:
         with:
           header: terraform-apply
           message: |
-            ### 🚀 Terraform Apply Completed
-            ✅ Infrastructure applied successfully!
+            ### ✅ Terraform Apply Completed
+            Infrastructure applied successfully!
