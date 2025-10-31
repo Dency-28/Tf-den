@@ -1,85 +1,79 @@
-name: Terraform CI/CD (Test)
+name: Terraform CI/CD (Testing Branch)
 
 on:
-  pull_request:
-    branches:
-      - testing
-      - main
   issue_comment:
     types: [created]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
   issues: write
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply (Test)
-    runs-on: ubuntu-latest
-
     if: |
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'issue_comment' && (contains(github.event.comment.body, '/plan') || contains(github.event.comment.body, '/apply')))
-
+      github.event.comment.body == '/plan'
+    runs-on: ubuntu-latest
     env:
       AWS_REGION: us-east-1
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.8
+          terraform_version: 1.5.7
 
-      - name: Configure AWS credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Init (with backend)
+      # 🧠 Temporarily disable backend.tf
+      - name: Disable backend for plan
         run: |
-          echo "⚙️ Initializing Terraform with backend..."
-          cd terraform_infra
-          terraform init -reconfigure -input=false
+          echo "🔧 Temporarily renaming backend.tf to disable backend..."
+          if [ -f terraform_infra/backend.tf ]; then
+            mv terraform_infra/backend.tf terraform_infra/backend.tf.disabled
+          fi
 
-      - name: Terraform Validate
+      - name: Terraform Plan (Local mode, no backend)
         run: |
           cd terraform_infra
+          echo "🧩 Running Terraform Plan (NO backend, local only)"
+          terraform init -input=false
+          terraform fmt -check
           terraform validate
+          terraform plan -no-color -out=tfplan > ../plan_output.txt
 
-      - name: Terraform Plan
-        if: contains(github.event.comment.body, '/plan') || github.event_name == 'pull_request'
-        id: plan
+      - name: Restore backend file
+        if: always()
         run: |
-          echo "🧩 Running Terraform Plan with backend..."
-          cd terraform_infra
-          terraform plan -no-color -out=tfplan > plan.txt
+          echo "🔁 Restoring backend.tf..."
+          if [ -f terraform_infra/backend.tf.disabled ]; then
+            mv terraform_infra/backend.tf.disabled terraform_infra/backend.tf
+          fi
+
+      - name: Comment plan output to PR
+        if: always()
+        run: |
           {
-            echo '### 🧩 Terraform Plan Result'
-            echo '<details><summary>Click to view full plan logs</summary>'
+            echo '### 🧩 Terraform Plan Result (NO backend used)'
+            echo '<details><summary>Click to view plan output</summary>'
             echo ''
             echo '```'
-            cat plan.txt
+            cat plan_output.txt
             echo '```'
             echo '</details>'
-          } > ../plan_comment.md
+          } > plan_comment.md
 
-      - name: Post Plan Output to PR
-        if: contains(github.event.comment.body, '/plan') || github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
+      - name: Post comment
+        uses: peter-evans/create-or-update-comment@v4
         with:
-          header: terraform-plan
-          path: plan_comment.md
-
-      - name: Terraform Apply
-        if: contains(github.event.comment.body, '/apply')
-        run: |
-          echo "🚀 Running Terraform Apply..."
-          cd terraform_infra
-          terraform apply -auto-approve -input=false
+          issue-number: ${{ github.event.issue.number }}
+          body-path: plan_comment.md
