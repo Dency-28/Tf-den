@@ -1,4 +1,4 @@
-name: Terraform CI/CD 
+name: Terraform CI/CD
 
 on:
   pull_request:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply (Test)
+    name: Terraform Plan & Apply
     runs-on: ubuntu-latest
 
     env:
@@ -42,66 +42,72 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ─── INFRA PLAN ONLY (No backend creation) ───
+      # ─────────────────────────────
+      # 🧩 /PLAN — No backend at all
+      # ─────────────────────────────
       - name: Terraform Infra Plan (for /plan)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
-        id: infra_plan
+        id: plan
         run: |
-          echo "🧩 Running Terraform Plan without backend..."
+          echo "🧩 Running Terraform Plan (without backend)..."
+          
+          cd terraform_infra
 
-          # Temporarily disable backend config to avoid S3/Dynamo requirement
-          find terraform_infra -type f -name "*.tf" -exec sed -i '/backend\s*"/,/}/d' {} +
+          # Initialize without remote backend
+          terraform init -backend=false -input=false
+          terraform fmt
+          terraform validate
 
-          # Initialize with local state only
-          terraform -chdir=terraform_infra init -backend=false -input=false
-          terraform -chdir=terraform_infra fmt
-          terraform -chdir=terraform_infra validate
-          terraform -chdir=terraform_infra plan -no-color -out=infra_plan | tee infra_plan.txt
+          terraform plan -no-color -out=plan.out | tee ../plan_output.txt
 
           {
             echo '### 🧩 Terraform Infra Plan Result (/plan)'
-            echo '<details><summary>Click to view infra plan logs</summary>'
+            echo '<details><summary>Click to expand logs</summary>'
             echo ''
             echo '```'
-            cat infra_plan.txt
+            cat ../plan_output.txt
             echo '```'
             echo '</details>'
-          } > infra_plan_comment.md
+          } > ../plan_comment.md
 
-      - name: Post Infra Plan Output
-        if: steps.infra_plan.conclusion == 'success' && steps.pr.outputs.number != ''
+      - name: Post Plan Output
+        if: steps.plan.conclusion == 'success' && steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.pr.outputs.number }}
-          header: 🧩 Terraform Infra Plan Output (/plan)
-          path: infra_plan_comment.md
+          header: 🧩 Terraform Infra Plan (/plan)
+          path: plan_comment.md
           recreate: true
 
-      # ─── APPLY (Create backend + infra) ───
+      # ─────────────────────────────
+      # 🚀 /APPLY — Create backend + infra
+      # ─────────────────────────────
       - name: Terraform Apply (for /apply)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         id: apply
         run: |
-          echo "🚀 Applying backend and infra..."
+          echo "🚀 Running Terraform Apply..."
+          
+          # 1️⃣ Create backend (S3 + Dynamo)
+          cd terraform_backend
+          terraform init -input=false
+          terraform apply -auto-approve
 
-          # 1️⃣ Create backend first
-          terraform -chdir=terraform_backend init -input=false
-          terraform -chdir=terraform_backend apply -auto-approve
-
-          # 2️⃣ Apply infra with backend reconfigured
-          terraform -chdir=terraform_infra init -reconfigure
-          terraform -chdir=terraform_infra apply -auto-approve | tee apply.txt
+          # 2️⃣ Apply infra (now backend exists)
+          cd ../terraform_infra
+          terraform init -reconfigure
+          terraform apply -auto-approve | tee ../apply_output.txt
 
           {
-            echo '### 🚀 Terraform Infra Apply Result (/apply)'
-            echo '<details><summary>Click to view full apply logs</summary>'
+            echo '### 🚀 Terraform Apply Result (/apply)'
+            echo '<details><summary>Click to expand logs</summary>'
             echo ''
             echo '```'
-            cat apply.txt
+            cat ../apply_output.txt
             echo '```'
             echo '</details>'
-          } > apply_comment.md
+          } > ../apply_comment.md
 
       - name: Post Apply Output
         if: steps.apply.conclusion == 'success' && steps.pr.outputs.number != ''
@@ -109,6 +115,6 @@ jobs:
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.pr.outputs.number }}
-          header: 🚀 Terraform Infra Apply Output (/apply)
+          header: 🚀 Terraform Apply (/apply)
           path: apply_comment.md
           recreate: true
