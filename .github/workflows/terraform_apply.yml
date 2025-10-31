@@ -17,20 +17,23 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply
+    name: Terraform Plan & Apply (Test)
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: us-east-1
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -42,79 +45,91 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ─────────────────────────────
-      # 🧩 /PLAN — No backend at all
-      # ─────────────────────────────
-      - name: Terraform Infra Plan (for /plan)
+      # --------------------------------------------------------------------
+      # /plan: SAFE plan for infra ONLY — never touch terraform_backend
+      # --------------------------------------------------------------------
+      - name: Terraform Infra Plan (no backend, safe)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
-        id: plan
+        id: infra_plan
         run: |
-          echo "🧩 Running Terraform Plan (without backend)..."
-          
-          cd terraform_infra
+          set -euo pipefail
+          echo "=== SAFE /plan: will NOT touch terraform_backend or create S3/Dynamo ==="
 
-          # Initialize without remote backend
-          terraform init -backend=false -input=false
-          terraform fmt
-          terraform validate
+          # Make a temporary copy of infra so we don't modify repo files
+          rm -rf /tmp/terraform_infra_nobackend
+          cp -a terraform_infra /tmp/terraform_infra_nobackend
 
-          terraform plan -no-color -out=plan.out | tee ../plan_output.txt
+          # Remove any backend "s3" blocks from all .tf files in the copy (works for backend blocks anywhere)
+          find /tmp/terraform_infra_nobackend -type f -name '*.tf' -print0 | xargs -0 -n1 -I{} sed -i '/backend[[:space:]]*"s3"[[:space:]]*{/,/}/d' {}
 
+          # Initialize with local backend only (backend=false)
+          terraform -chdir=/tmp/terraform_infra_nobackend init -backend=false -input=false
+
+          # Format & validate
+          terraform -chdir=/tmp/terraform_infra_nobackend fmt -recursive || true
+          terraform -chdir=/tmp/terraform_infra_nobackend validate || true
+
+          # Plan (local only) and save logs
+          terraform -chdir=/tmp/terraform_infra_nobackend plan -no-color -out=/tmp/infra_plan_out | tee /tmp/infra_plan.txt || true
+
+          # Build PR comment
           {
-            echo '### 🧩 Terraform Infra Plan Result (/plan)'
-            echo '<details><summary>Click to expand logs</summary>'
+            echo '### 🧩 Terraform Infra Plan (safe, no backend)'
+            echo ''
+            echo '<details><summary>Click to view plan logs</summary>'
             echo ''
             echo '```'
-            cat ../plan_output.txt
+            sed -n '1,4000p' /tmp/infra_plan.txt || true
             echo '```'
             echo '</details>'
-          } > ../plan_comment.md
+          } > plan_comment.md
 
-      - name: Post Plan Output
-        if: steps.plan.conclusion == 'success' && steps.pr.outputs.number != ''
+      - name: Post Plan Output to PR
+        if: steps.infra_plan.conclusion == 'success' && steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.pr.outputs.number }}
-          header: 🧩 Terraform Infra Plan (/plan)
+          header: 🧩 Terraform Plan Output (safe, no backend)
           path: plan_comment.md
           recreate: true
 
-      # ─────────────────────────────
-      # 🚀 /APPLY — Create backend + infra
-      # ─────────────────────────────
-      - name: Terraform Apply (for /apply)
+      # --------------------------------------------------------------------
+      # /apply: Create backend then apply infra (this is the only time backend is created)
+      # --------------------------------------------------------------------
+      - name: Terraform Apply (create backend + apply infra)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         id: apply
         run: |
-          echo "🚀 Running Terraform Apply..."
-          
-          # 1️⃣ Create backend (S3 + Dynamo)
-          cd terraform_backend
-          terraform init -input=false
-          terraform apply -auto-approve
+          set -euo pipefail
+          echo "=== /apply: creating backend (terraform_backend) then applying infra ==="
 
-          # 2️⃣ Apply infra (now backend exists)
-          cd ../terraform_infra
-          terraform init -reconfigure
-          terraform apply -auto-approve | tee ../apply_output.txt
+          # 1) Create backend resources (S3 + Dynamo) — ONLY in /apply
+          terraform -chdir=terraform_backend init -input=false
+          terraform -chdir=terraform_backend apply -auto-approve
 
+          # 2) Reconfigure infra to use the real backend and apply infra
+          terraform -chdir=terraform_infra init -reconfigure -input=false
+          terraform -chdir=terraform_infra apply -auto-approve | tee /tmp/infra_apply.txt
+
+          # Build PR comment
           {
             echo '### 🚀 Terraform Apply Result (/apply)'
-            echo '<details><summary>Click to expand logs</summary>'
+            echo ''
+            echo '<details><summary>Click to view apply logs</summary>'
             echo ''
             echo '```'
-            cat ../apply_output.txt
+            sed -n '1,4000p' /tmp/infra_apply.txt || true
             echo '```'
             echo '</details>'
-          } > ../apply_comment.md
+          } > apply_comment.md
 
-      - name: Post Apply Output
+      - name: Post Apply Output to PR
         if: steps.apply.conclusion == 'success' && steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.pr.outputs.number }}
-          header: 🚀 Terraform Apply (/apply)
+          header: 🚀 Terraform Apply Output (/apply)
           path: apply_comment.md
           recreate: true
