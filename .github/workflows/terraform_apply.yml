@@ -1,4 +1,4 @@
-name: Terraform CI/CD
+name: Terraform CI/CD 
 
 on:
   pull_request:
@@ -42,27 +42,25 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ─── INFRA PLAN (/plan) — No backend, no S3/Dynamo ───
-      - name: Terraform Infra Plan (No Backend)
+      # ─── INFRA PLAN ONLY (No backend creation) ───
+      - name: Terraform Infra Plan (for /plan)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')
         id: infra_plan
         run: |
-          echo "🧩 Running Terraform Plan without backend"
+          echo "🧩 Running Terraform Plan without backend..."
 
-          # Copy infra folder to temp path
-          cp -r terraform_infra terraform_infra_nobackend
+          # Temporarily disable backend config to avoid S3/Dynamo requirement
+          find terraform_infra -type f -name "*.tf" -exec sed -i '/backend\s*"/,/}/d' {} +
 
-          # Remove backend block dynamically (no file modification in repo)
-          sed -i '/backend *"s3" *{/,/}/d' terraform_infra_nobackend/*.tf || true
-
-          terraform -chdir=terraform_infra_nobackend init -backend=false -input=false
-          terraform -chdir=terraform_infra_nobackend fmt
-          terraform -chdir=terraform_infra_nobackend validate
-          terraform -chdir=terraform_infra_nobackend plan -no-color -out=infra_plan | tee infra_plan.txt
+          # Initialize with local state only
+          terraform -chdir=terraform_infra init -backend=false -input=false
+          terraform -chdir=terraform_infra fmt
+          terraform -chdir=terraform_infra validate
+          terraform -chdir=terraform_infra plan -no-color -out=infra_plan | tee infra_plan.txt
 
           {
             echo '### 🧩 Terraform Infra Plan Result (/plan)'
-            echo '<details><summary>Click to view plan logs</summary>'
+            echo '<details><summary>Click to view infra plan logs</summary>'
             echo ''
             echo '```'
             cat infra_plan.txt
@@ -80,18 +78,18 @@ jobs:
           path: infra_plan_comment.md
           recreate: true
 
-      # ─── APPLY (creates backend + infra normally) ───
-      - name: Terraform Apply (/apply)
+      # ─── APPLY (Create backend + infra) ───
+      - name: Terraform Apply (for /apply)
         if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply')
         id: apply
         run: |
-          echo "🚀 Running Terraform Apply (creates backend + infra)"
+          echo "🚀 Applying backend and infra..."
 
           # 1️⃣ Create backend first
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend apply -auto-approve
 
-          # 2️⃣ Apply infra using real backend
+          # 2️⃣ Apply infra with backend reconfigured
           terraform -chdir=terraform_infra init -reconfigure
           terraform -chdir=terraform_infra apply -auto-approve | tee apply.txt
 
