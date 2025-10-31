@@ -1,4 +1,4 @@
-name: Terraform Plan & Apply (Test)
+name: Terraform CI/CD (Test)
 
 on:
   pull_request:
@@ -6,8 +6,7 @@ on:
       - testing
       - main
   issue_comment:
-    types:
-      - created
+    types: [created]
   workflow_dispatch:
 
 permissions:
@@ -28,33 +27,54 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Terraform
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.8
 
-      - name: Terraform Init (Backend Enabled)
-        run: terraform init -reconfigure
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform Init (with backend)
+        run: |
+          cd terraform_infra
+          terraform init -reconfigure -input=false
 
       - name: Terraform Validate
-        run: terraform validate
+        run: |
+          cd terraform_infra
+          terraform validate
 
       - name: Terraform Plan
-        id: plan
         if: contains(github.event.comment.body, '/plan') || github.event_name == 'pull_request'
-        run: terraform plan -no-color -input=false | tee plan.txt
+        id: plan
+        run: |
+          echo "🧩 Running Terraform Plan (Backend Enabled)"
+          cd terraform_infra
+          terraform plan -no-color -input=false > plan.txt
+          {
+            echo '### 🧩 Terraform Plan Result'
+            echo '<details><summary>Click to view full plan logs</summary>'
+            echo ''
+            echo '```'
+            cat plan.txt
+            echo '```'
+            echo '</details>'
+          } > ../plan_comment.md
 
       - name: Post Plan Output to PR
         if: contains(github.event.comment.body, '/plan') || github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: terraform-plan
-          message: |
-            ### Terraform Plan Output
-            ```
-            ${{ steps.plan.outputs.stdout }}
-            ```
+          path: plan_comment.md
 
       - name: Terraform Apply
         if: contains(github.event.comment.body, '/apply')
-        run: terraform apply -auto-approve -input=false
+        run: |
+          cd terraform_infra
+          terraform apply -auto-approve -input=false
