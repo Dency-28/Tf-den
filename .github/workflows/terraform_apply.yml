@@ -31,9 +31,9 @@ jobs:
         with:
           terraform_version: 1.9.8
 
-      # ✅ Identify comment trigger
-      - name: Check comment body
-        id: check_comment
+      # Detect comment trigger
+      - name: Detect comment trigger
+        id: comment
         if: github.event_name == 'issue_comment'
         run: |
           comment="${{ github.event.comment.body }}"
@@ -43,25 +43,23 @@ jobs:
             echo "run_apply=true" >> $GITHUB_ENV
           fi
 
-      # ✅ Run PLAN (no backend creation)
-      - name: Terraform Plan (infra only)
+      # ✅ PLAN — only runs infra (never touches backend)
+      - name: Terraform Plan (Infra only, no backend)
         if: env.run_plan == 'true'
         run: |
-          echo "Running Terraform Plan for infra (without backend)..."
+          echo "🟡 Skipping backend creation. Running plan for infra only."
           terraform -chdir=terraform_infra init -backend=false -input=false
           terraform -chdir=terraform_infra plan -input=false -no-color > plan_output.txt || true
-          echo "PLAN OUTPUT BELOW:"
           cat terraform_infra/plan_output.txt || cat plan_output.txt
 
-      # ✅ Run APPLY (create backend + apply infra)
+      # ✅ APPLY — runs backend first, then infra
       - name: Terraform Apply
         if: env.run_apply == 'true'
         run: |
-          echo "Creating backend (S3 + DynamoDB)..."
+          echo "🟢 Creating backend (S3 + DynamoDB)..."
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend apply -auto-approve
 
-          echo "Running Terraform Apply for infra..."
+          echo "🟢 Applying infra with backend..."
           terraform -chdir=terraform_infra init -reconfigure -input=false
           terraform -chdir=terraform_infra apply -auto-approve
-
