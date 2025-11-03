@@ -1,4 +1,4 @@
-name: Terraform 
+name: Terraform
 
 on:
   pull_request:
@@ -16,15 +16,16 @@ permissions:
   issues: write
 
 jobs:
-  terraform-plan:
-    name: Terraform Plan 
+  terraform:
+    name: Terraform Plan & Apply
     runs-on: ubuntu-latest
 
     if: |
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '/plan'))
+       (contains(github.event.comment.body, '/plan') ||
+        contains(github.event.comment.body, '/apply')))
 
     env:
       AWS_REGION: us-east-1
@@ -48,13 +49,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ✅ Fix: Comment out the entire backend block before running plan
+      # ✅ Disable backend
       - name: Terraform Init (No Backend)
         run: |
           echo "🚫 Skipping remote backend — disabling full backend block..."
-          # Comment out all lines from 'backend "s3" {' to the closing '}'
           sed -i '/backend "s3" {/,/}/ s/^/#/' terraform_infra/backend.tf || true
-          
+
           echo "🧩 Initializing Terraform (local backend only)..."
           rm -rf terraform_infra/.terraform terraform_infra/.terraform.lock.hcl || true
           terraform -chdir=terraform_infra init -backend=false -input=false
@@ -64,12 +64,13 @@ jobs:
           terraform -chdir=terraform_infra fmt -check=false
           terraform -chdir=terraform_infra validate
 
-      - name: Terraform Plan (Local State)
+      # 🧩 Terraform Plan
+      - name: Terraform Plan
         id: plan
+        if: contains(github.event.comment.body, '/plan') || github.event_name == 'pull_request'
         run: |
           echo "🧩 Running Terraform plan locally (no backend)..."
           terraform -chdir=terraform_infra plan -no-color | tee plan.txt
-          
           {
             echo '### 🧩 Terraform Plan Result (Local State)'
             echo '<details><summary>Click to view full plan logs</summary>'
@@ -81,11 +82,38 @@ jobs:
           } > plan_comment.md
 
       - name: Post Plan Output to PR
-        if: steps.plan.conclusion == 'success'
+        if: (contains(github.event.comment.body, '/plan') || github.event_name == 'pull_request') && steps.plan.conclusion == 'success'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ github.event.pull_request.number || github.event.issue.number }}
           header: 🧩 Terraform Plan Output (Local State)
           path: plan_comment.md
+          recreate: true
+
+      # 🚀 Terraform Apply (only when '/apply' comment is used)
+      - name: Terraform Apply
+        if: contains(github.event.comment.body, '/apply')
+        run: |
+          echo "🚀 Applying Terraform changes..."
+          terraform -chdir=terraform_infra apply -auto-approve -no-color | tee apply.txt
+
+          {
+            echo '### 🚀 Terraform Apply Result (Local State)'
+            echo '<details><summary>Click to view full apply logs</summary>'
+            echo ''
+            echo '```hcl'
+            cat apply.txt
+            echo '```'
+            echo '</details>'
+          } > apply_comment.md
+
+      - name: Post Apply Output to PR
+        if: contains(github.event.comment.body, '/apply')
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ github.event.pull_request.number || github.event.issue.number }}
+          header: 🚀 Terraform Apply Output (Local State)
+          path: apply_comment.md
           recreate: true
