@@ -95,17 +95,12 @@ jobs:
           recreate: true
 
       # ─────────── Terraform Apply ───────────
-      - name: Terraform Apply (Full Pipeline)
+      - name: Terraform Apply
         id: apply
         if: |
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
         run: |
-          echo "🔹 Running Full Terraform Pipeline for /apply ..."
-          # Backend
-          terraform -chdir=terraform_backend init -input=false
-          terraform -chdir=terraform_backend apply -auto-approve -no-color | tee backend_apply.txt
-          
           # Infra Init + Plan + Apply
           terraform -chdir=terraform_infra init -reconfigure
           terraform -chdir=terraform_infra fmt
@@ -117,8 +112,7 @@ jobs:
           EC2_IP=$(terraform -chdir=terraform_infra output -raw ec2_public_ip || echo "N/A")
           RDS_ENDPOINT=$(terraform -chdir=terraform_infra output -raw rds_endpoint || echo "N/A")
 
-          # Create comment markdown
-          {
+         {
             echo '### 🚀 Terraform Apply Result'
             echo '<details><summary>Click to view full apply logs</summary>'
             echo ''
@@ -126,10 +120,6 @@ jobs:
             cat apply.txt
             echo '```'
             echo '</details>'
-            echo ''
-            echo '### 🌍 Deployment Outputs'
-            echo "- **EC2 Public IP:** $EC2_IP"
-            echo "- **RDS Endpoint:** $RDS_ENDPOINT"
           } > apply_comment.md
 
       # ─────────── Post Apply Output to PR ───────────
