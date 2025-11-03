@@ -1,4 +1,4 @@
-name: Terraform-CI-CD
+name: Terraform CI/CD
 
 on:
   pull_request:
@@ -19,145 +19,84 @@ jobs:
   terraform:
     name: Terraform Plan & Apply
     runs-on: ubuntu-latest
-
     env:
       AWS_REGION: us-east-1
 
-    if: |
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request != null &&
-       (contains(github.event.comment.body, '/plan') ||
-        contains(github.event.comment.body, '/apply')))
-
     steps:
-      # ─────────── Checkout Repo ───────────
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      # ─────────── Setup Terraform ───────────
-      - uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.6
+          terraform_version: 1.8.5
 
-      # ─────────── Configure AWS credentials ───────────
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+      # Initialize Backend
+      - name: Terraform Init (with reconfigure)
+        id: init
+        run: terraform -chdir=terraform_infra init -reconfigure
 
-      # ─────────── Get PR number ───────────
-      - id: pr
-        uses: jwalton/gh-find-current-pr@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          state: open
+      # Run Terraform Validate
+      - name: Terraform Validate
+        id: validate
+        run: terraform -chdir=terraform_infra validate
 
-      # ─────────── Backend Init (Only for Apply / Manual Dispatch) ───────────
-      - name: Backend Init
-        id: backend
-        if: |
-          github.event_name == 'workflow_dispatch' ||
-          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
+      # Detect comment trigger
+      - name: Check for Comment Trigger
+        id: trigger
+        if: github.event_name == 'issue_comment'
         run: |
-          echo "🔹 Initializing Terraform backend..."
-          terraform -chdir=terraform_backend init -input=false
-          terraform -chdir=terraform_backend apply -auto-approve -no-color | tee backend_apply.txt
+          comment_body=$(echo "${{ github.event.comment.body }}" | tr '[:upper:]' '[:lower:]')
+          if [[ "$comment_body" == "/plan" ]]; then
+            echo "trigger=plan" >> $GITHUB_OUTPUT
+          elif [[ "$comment_body" == "/apply" ]]; then
+            echo "trigger=apply" >> $GITHUB_OUTPUT
+          elif [[ "$comment_body" == "/tf" ]]; then
+            echo "trigger=tf" >> $GITHUB_OUTPUT
+          else
+            echo "trigger=none" >> $GITHUB_OUTPUT
+          fi
 
-          echo "🔹 Capturing backend outputs..."
-          TF_BUCKET=$(terraform -chdir=terraform_backend output -raw tf_state_bucket)
-          TF_LOCKTABLE=$(terraform -chdir=terraform_backend output -raw tf_state_lock_table)
-
-          echo "TF_BUCKET=$TF_BUCKET" >> $GITHUB_ENV
-          echo "TF_LOCKTABLE=$TF_LOCKTABLE" >> $GITHUB_ENV
-
-          echo "✅ Backend setup complete: $TF_BUCKET / $TF_LOCKTABLE"
-
-      # ─────────── Terraform Plan ───────────
+      # Terraform Plan
       - name: Terraform Plan
+        if: steps.trigger.outputs.trigger == 'plan' || steps.trigger.outputs.trigger == 'tf'
         id: plan
-        if: |
-          github.event_name == 'pull_request' ||
-          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
-        run: |
-          echo "🔹 Running Terraform Plan (no backend)..."
-          terraform -chdir=terraform_infra init -backend=false -reconfigure
-          terraform -chdir=terraform_infra fmt
-          terraform -chdir=terraform_infra validate
-          terraform -chdir=terraform_infra plan -no-color | tee plan.txt
+        run: terraform -chdir=terraform_infra plan -out=tfplan | tee plan.txt
 
-          {
-            echo '### 🧩 Terraform Plan Result'
-            echo '<details><summary>Click to view full plan logs</summary>'
-            echo ''
-            echo '```hcl'
-            cat plan.txt
-            echo '```'
-            echo '</details>'
-          } > plan_comment.md
-
-      - name: Post Plan Output
-        if: steps.plan.conclusion == 'success'
-        uses: marocchino/sticky-pull-request-comment@v2
+      - name: Post Plan Comment
+        if: steps.trigger.outputs.trigger == 'plan' || steps.trigger.outputs.trigger == 'tf'
+        uses: peter-evans/create-or-update-comment@v4
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number || github.event.issue.number }}
-          header: "Terraform Plan Output"
-          path: plan_comment.md
-          recreate: true
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### 🧭 Terraform Plan Result
+            <details><summary>Click to expand</summary>
 
-      # ─────────── Terraform Apply ───────────
+            ```terraform
+            ${{ steps.plan.outputs.stdout }}
+            ```
+
+            </details>
+
+      # Terraform Apply
       - name: Terraform Apply
+        if: steps.trigger.outputs.trigger == 'apply' || steps.trigger.outputs.trigger == 'tf'
         id: apply
-        if: |
-          github.event_name == 'workflow_dispatch' ||
-          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
-        run: |
-          echo "🔹 Configuring Terraform backend with outputs..."
-          cat <<EOF > terraform_infra/backend.auto.tfbackend
-          bucket         = "${TF_BUCKET}"
-          key            = "terraform.tfstate"
-          region         = "${AWS_REGION}"
-          dynamodb_table = "${TF_LOCKTABLE}"
-          EOF
+        run: terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
 
-          echo "🔹 Initializing Terraform with backend..."
-          terraform -chdir=terraform_infra init -backend-config=backend.auto.tfbackend -reconfigure
-          terraform -chdir=terraform_infra fmt
-          terraform -chdir=terraform_infra validate
-
-          echo "🔹 Generating Terraform plan..."
-          terraform -chdir=terraform_infra plan -out=tfplan -no-color | tee plan.txt
-
-          echo "🔹 Applying changes..."
-          terraform -chdir=terraform_infra apply -auto-approve tfplan -no-color | tee apply.txt
-
-          echo "🔹 Collecting outputs..."
-          EC2_IP=$(terraform -chdir=terraform_infra output -raw ec2_public_ip || echo "N/A")
-          RDS_ENDPOINT=$(terraform -chdir=terraform_infra output -raw rds_endpoint || echo "N/A")
-
-          {
-            echo '### 🚀 Terraform Apply Result'
-            echo '<details><summary>Click to view full apply logs</summary>'
-            echo ''
-            echo '```hcl'
-            cat apply.txt
-            echo '```'
-            echo '</details>'
-            echo ''
-            echo '**EC2 Public IP:** '"$EC2_IP"
-            echo '**RDS Endpoint:** '"$RDS_ENDPOINT"
-          } > apply_comment.md
-
-      - name: Post Apply Output
-        if: steps.apply.conclusion == 'success'
-        uses: marocchino/sticky-pull-request-comment@v2
+      - name: Post Apply Comment
+        if: steps.trigger.outputs.trigger == 'apply' || steps.trigger.outputs.trigger == 'tf'
+        uses: peter-evans/create-or-update-comment@v4
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number || github.event.issue.number }}
-          header: "Terraform Apply Output"
-          path: apply_comment.md
-          recreate: true
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### 🚀 Terraform Apply Result
+            <details><summary>Click to expand logs</summary>
+
+            ```terraform
+            ${{ steps.apply.outputs.stdout }}
+            ```
+
+            </details>
+
+            ✅ EC2 Public IP: `${{ steps.apply.outputs.ec2_public_ip }}`
