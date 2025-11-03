@@ -1,4 +1,4 @@
-name: Terraform Plan & Apply (Local State)
+name: Terraform 
 
 on:
   pull_request:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply (Local State)
+    name: Terraform 
     runs-on: ubuntu-latest
 
     # Run on PR or on comment "/plan" or "/apply"
@@ -50,7 +50,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # ✅ Disable full backend block before running Terraform init
-      - name: Terraform Init (No Backend)
+      - name: Terraform Init
         run: |
           echo "🚫 Disabling remote backend configuration..."
           sed -i '/backend "s3" {/,/}/ s/^/#/' terraform_infra/backend.tf || true
@@ -119,3 +119,4 @@ jobs:
           header: 🚀 Terraform Apply Output
           path: apply_comment.md
           recreate: true
+
