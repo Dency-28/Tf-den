@@ -1,9 +1,26 @@
-# ✅ Generate random suffix so S3 & DynamoDB are unique
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+# ✅ Generate random suffix for uniqueness
 resource "random_id" "suffix" {
   byte_length = 4
 }
 
-# ✅ Create S3 bucket for remote backend
+# ✅ Create S3 bucket for Terraform remote backend
 resource "aws_s3_bucket" "tf_state" {
   bucket        = "tf-state-dency-${random_id.suffix.hex}"
   force_destroy = true
@@ -33,7 +50,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "tf_state_encrypti
   }
 }
 
-# ✅ Create DynamoDB table for locks
+# ✅ DynamoDB table for state locking
 resource "aws_dynamodb_table" "tf_locks" {
   name         = "tf-state-locks-${random_id.suffix.hex}"
   billing_mode = "PAY_PER_REQUEST"
@@ -49,7 +66,7 @@ resource "aws_dynamodb_table" "tf_locks" {
   }
 }
 
-# ✅ Outputs (used later in infra init)
+# ✅ Outputs to use in GitHub workflow or manually copy
 output "tf_state_bucket" {
   value = aws_s3_bucket.tf_state.bucket
 }
