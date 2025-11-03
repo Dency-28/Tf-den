@@ -69,7 +69,6 @@ jobs:
           github.event_name == 'pull_request' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
         run: |
-          terraform -chdir=terraform_infra init -reconfigure
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
           terraform -chdir=terraform_infra plan -no-color | tee plan.txt
