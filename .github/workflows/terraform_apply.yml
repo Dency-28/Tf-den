@@ -1,4 +1,4 @@
-name: Terraform 
+name: Terraform CI/CD
 
 on:
   pull_request:
@@ -6,8 +6,7 @@ on:
       - testing
       - main
   issue_comment:
-    types:
-      - created
+    types: [created]
   workflow_dispatch:
 
 permissions:
@@ -17,10 +16,9 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform 
+    name: Terraform Plan & Apply
     runs-on: ubuntu-latest
 
-    # Run on PR or on comment "/plan" or "/apply"
     if: |
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' &&
@@ -49,14 +47,25 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ✅ Disable full backend block before running Terraform init
-      - name: Terraform Init
+      # 🧩 Disable backend only for plan
+      - name: Terraform Init (Local for Plan)
+        if: |
+          github.event_name != 'issue_comment' ||
+          contains(github.event.comment.body, '/plan')
         run: |
-          echo "🚫 Disabling remote backend configuration..."
+          echo "🚫 Using local backend for PLAN..."
           sed -i '/backend "s3" {/,/}/ s/^/#/' terraform_infra/backend.tf || true
-          echo "🧩 Initializing Terraform with local backend..."
           rm -rf terraform_infra/.terraform terraform_infra/.terraform.lock.hcl || true
           terraform -chdir=terraform_infra init -backend=false -input=false
+
+      - name: Terraform Init (Real for Apply)
+        if: |
+          github.event_name == 'issue_comment' &&
+          contains(github.event.comment.body, '/apply')
+        run: |
+          echo "🌍 Using real S3 backend for APPLY..."
+          sed -i '/^#/d' terraform_infra/backend.tf || true
+          terraform -chdir=terraform_infra init -input=false
 
       - name: Terraform Validate
         run: |
@@ -64,11 +73,13 @@ jobs:
           terraform -chdir=terraform_infra validate
 
       - name: Terraform Plan
+        if: |
+          github.event_name != 'issue_comment' ||
+          contains(github.event.comment.body, '/plan')
         id: plan
         run: |
           echo "🧩 Running Terraform plan..."
-          terraform -chdir=terraform_infra plan -no-color -out=tfplan | tee plan.txt
-
+          terraform -chdir=terraform_infra plan -no-color | tee plan.txt
           {
             echo '### 🧩 Terraform Plan Result'
             echo '<details><summary>Click to view plan logs</summary>'
@@ -89,15 +100,13 @@ jobs:
           path: plan_comment.md
           recreate: true
 
-      # ✅ Apply only if comment contains "/apply"
       - name: Terraform Apply
         if: |
           github.event_name == 'issue_comment' &&
           contains(github.event.comment.body, '/apply')
         run: |
           echo "🚀 Applying Terraform changes..."
-          terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
-
+          terraform -chdir=terraform_infra apply -auto-approve | tee apply.txt
           {
             echo '### 🚀 Terraform Apply Result'
             echo '<details><summary>Click to view apply logs</summary>'
@@ -119,4 +128,3 @@ jobs:
           header: 🚀 Terraform Apply Output
           path: apply_comment.md
           recreate: true
-
