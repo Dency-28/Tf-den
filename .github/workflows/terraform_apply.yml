@@ -56,31 +56,30 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ─────────── Backend Init (only for /apply or manual dispatch) ───────────
+      # ─────────── Backend Init (Only for Apply / Manual Dispatch) ───────────
       - name: Backend Init
         if: |
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
         run: |
-          echo "🔧 Initializing backend..."
+          echo "🔹 Initializing Terraform backend..."
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend plan -no-color | tee backend_plan.txt
 
-      # ─────────── Terraform Plan (for /plan) ───────────
-      - name: Terraform Plan (Local Backend)
-        id: plan_local
+      # ─────────── Terraform Plan ───────────
+      - name: Terraform Plan
+        id: plan
         if: |
           github.event_name == 'pull_request' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
         run: |
-          echo "🧩 Running PLAN with local backend (no S3)"
+          echo "🔹 Running Terraform Plan (no backend)..."
           terraform -chdir=terraform_infra init -backend=false -reconfigure
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
           terraform -chdir=terraform_infra plan -no-color | tee plan.txt
-
           {
-            echo '### 🧩 Terraform Plan (Local) Result'
+            echo '### 🧩 Terraform Plan Result'
             echo '<details><summary>Click to view full plan logs</summary>'
             echo ''
             echo '```hcl'
@@ -89,32 +88,8 @@ jobs:
             echo '</details>'
           } > plan_comment.md
 
-      # ─────────── Terraform Plan (for /apply) ───────────
-      - name: Terraform Plan (Remote Backend)
-        id: plan_remote
-        if: |
-          github.event_name == 'workflow_dispatch' ||
-          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
-        run: |
-          echo "🧩 Running PLAN with remote backend (S3)"
-          terraform -chdir=terraform_infra init -reconfigure
-          terraform -chdir=terraform_infra fmt
-          terraform -chdir=terraform_infra validate
-          terraform -chdir=terraform_infra plan -out=tfplan -no-color | tee plan.txt
-
-          {
-            echo '### 🧩 Terraform Plan (Remote) Result'
-            echo '<details><summary>Click to view full plan logs</summary>'
-            echo ''
-            echo '```hcl'
-            cat plan.txt
-            echo '```'
-            echo '</details>'
-          } > plan_comment.md
-
-      # ─────────── Post Plan Output ───────────
       - name: Post Plan Output
-        if: steps.plan_local.conclusion == 'success' || steps.plan_remote.conclusion == 'success'
+        if: steps.plan.conclusion == 'success'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -130,9 +105,18 @@ jobs:
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
         run: |
-          echo "🚀 Running Terraform Apply"
+          echo "🔹 Initializing Terraform with backend..."
+          terraform -chdir=terraform_infra init -reconfigure
+          terraform -chdir=terraform_infra fmt
+          terraform -chdir=terraform_infra validate
+          
+          echo "🔹 Generating Terraform plan..."
+          terraform -chdir=terraform_infra plan -out=tfplan -no-color | tee plan.txt
+          
+          echo "🔹 Applying changes..."
           terraform -chdir=terraform_infra apply -auto-approve tfplan -no-color | tee apply.txt
 
+          echo "🔹 Collecting outputs..."
           EC2_IP=$(terraform -chdir=terraform_infra output -raw ec2_public_ip || echo "N/A")
           RDS_ENDPOINT=$(terraform -chdir=terraform_infra output -raw rds_endpoint || echo "N/A")
 
@@ -149,7 +133,6 @@ jobs:
             echo '**RDS Endpoint:** '"$RDS_ENDPOINT"
           } > apply_comment.md
 
-      # ─────────── Post Apply Output ───────────
       - name: Post Apply Output
         if: steps.apply.conclusion == 'success'
         uses: marocchino/sticky-pull-request-comment@v2
