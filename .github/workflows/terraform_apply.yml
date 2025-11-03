@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan and Apply
+    name: Terraform Plan
     runs-on: ubuntu-latest
 
     env:
@@ -56,8 +56,12 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ─────────── Backend Init ───────────
+      # ─────────── Backend Init (ONLY for apply / manual dispatch) ───────────
+      # This will NOT run for /plan. It is gated to /apply or workflow_dispatch.
       - name: Backend Init
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
         run: |
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend plan -no-color | tee backend_plan.txt
@@ -69,7 +73,8 @@ jobs:
           github.event_name == 'pull_request' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
         run: |
-          terraform -chdir=terraform_infra init -reconfigure
+          # <-- IMPORTANT: disable remote backend for plan so S3/Dynamo aren't required
+          terraform -chdir=terraform_infra init -backend=false -reconfigure
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
           terraform -chdir=terraform_infra plan -no-color | tee plan.txt
@@ -91,43 +96,4 @@ jobs:
           number: ${{ steps.pr.outputs.number || github.event.issue.number }}
           header: "Terraform Plan Output"
           path: plan_comment.md
-          recreate: true
-
-      # ─────────── Terraform Apply ───────────
-      - name: Terraform Apply
-        id: apply
-        if: |
-          github.event_name == 'workflow_dispatch' ||
-          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
-        run: |
-          terraform -chdir=terraform_infra init -reconfigure
-          terraform -chdir=terraform_infra fmt
-          terraform -chdir=terraform_infra validate
-          terraform -chdir=terraform_infra plan -out=tfplan -no-color | tee plan.txt
-          terraform -chdir=terraform_infra apply -auto-approve tfplan -no-color | tee apply.txt
-
-          EC2_IP=$(terraform -chdir=terraform_infra output -raw ec2_public_ip || echo "N/A")
-          RDS_ENDPOINT=$(terraform -chdir=terraform_infra output -raw rds_endpoint || echo "N/A")
-
-          {
-            echo '### 🚀 Terraform Apply Result'
-            echo '<details><summary>Click to view full apply logs</summary>'
-            echo ''
-            echo '```hcl'
-            cat apply.txt
-            echo '```'
-            echo '</details>'
-            echo ''
-            echo '**EC2 Public IP:** '"$EC2_IP"
-            echo '**RDS Endpoint:** '"$RDS_ENDPOINT"
-          } > apply_comment.md
-
-      - name: Post Apply Output
-        if: steps.apply.conclusion == 'success'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ steps.pr.outputs.number || github.event.issue.number }}
-          header: "Terraform Apply Output"
-          path: apply_comment.md
           recreate: true
