@@ -112,7 +112,7 @@ resource "aws_security_group" "ec2_sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  
+
   ingress {
     description = "Node exporter"
     from_port   = 9100
@@ -180,7 +180,7 @@ resource "aws_instance" "demo" {
   instance_type               = "t3.micro"
   subnet_id                   = aws_subnet.demo_public_subnet.id
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
-  key_name                    = "deployer_new"  
+  key_name                    = "deployer_new"
   associate_public_ip_address = true
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
 
