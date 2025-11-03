@@ -30,20 +30,17 @@ jobs:
       AWS_REGION: us-east-1
 
     steps:
-      # ─────────── Checkout Repo ───────────
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.ref || github.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
-      # ─────────── Setup Terraform ───────────
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # ─────────── Configure AWS Credentials ───────────
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -51,25 +48,22 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ─────────── Terraform Init (Disable Backend) ───────────
       - name: Terraform Init (No Backend)
         run: |
           echo "🚫 Skipping remote backend — running plan locally."
+          rm -rf terraform_infra/.terraform terraform_infra/.terraform.lock.hcl || true
           terraform -chdir=terraform_infra init -backend=false -input=false
 
-      # ─────────── Terraform Format & Validate ───────────
       - name: Terraform Format & Validate
         run: |
           terraform -chdir=terraform_infra fmt -check=false
           terraform -chdir=terraform_infra validate
 
-      # ─────────── Terraform Plan ───────────
       - name: Terraform Plan (Local State)
         id: plan
         run: |
           echo "🧩 Running Terraform plan locally (no backend)..."
           terraform -chdir=terraform_infra plan -no-color | tee plan.txt
-
           {
             echo '### 🧩 Terraform Plan Result (Local State)'
             echo '<details><summary>Click to view full plan logs</summary>'
@@ -80,7 +74,6 @@ jobs:
             echo '</details>'
           } > plan_comment.md
 
-      # ─────────── Post Plan Output to PR ───────────
       - name: Post Plan Output to PR
         if: steps.plan.conclusion == 'success'
         uses: marocchino/sticky-pull-request-comment@v2
