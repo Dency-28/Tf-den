@@ -19,10 +19,6 @@ jobs:
   terraform:
     name: Terraform Plan & Apply
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     steps:
       - name: Checkout Repository
@@ -33,14 +29,21 @@ jobs:
         with:
           terraform_version: 1.8.5
 
-      # ✅ Initialize backend with credentials
-      - name: Terraform Init (with reconfigure)
-        run: terraform -chdir=terraform_infra init -reconfigure
+      # 🧠 Backend Init (with AWS credentials passed explicitly)
+      - name: Terraform Init (Backend)
+        working-directory: terraform_infra
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: terraform init -reconfigure
 
+      # Optional validation
       - name: Terraform Validate
-        run: terraform -chdir=terraform_infra validate
+        working-directory: terraform_infra
+        run: terraform validate
 
-      # Detect comment trigger
+      # 🧩 Detect comment triggers
       - name: Check for Comment Trigger
         id: trigger
         if: github.event_name == 'issue_comment'
@@ -56,42 +59,52 @@ jobs:
             echo "trigger=none" >> $GITHUB_OUTPUT
           fi
 
-      # Terraform Plan
+      # 🧱 Terraform Plan
       - name: Terraform Plan
         if: steps.trigger.outputs.trigger == 'plan' || steps.trigger.outputs.trigger == 'tf'
-        run: terraform -chdir=terraform_infra plan -out=tfplan | tee plan.txt
+        working-directory: terraform_infra
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: terraform plan -out=tfplan | tee plan.txt
 
-      - name: Post Plan Comment
+      - name: Post Plan Result
         if: steps.trigger.outputs.trigger == 'plan' || steps.trigger.outputs.trigger == 'tf'
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
             ### 🧭 Terraform Plan Result
-            <details><summary>Click to expand</summary>
+            <details><summary>View Logs</summary>
 
             ```terraform
-            $(cat plan.txt)
+            $(cat terraform_infra/plan.txt)
             ```
 
             </details>
 
-      # Terraform Apply
+      # 🚀 Terraform Apply
       - name: Terraform Apply
         if: steps.trigger.outputs.trigger == 'apply' || steps.trigger.outputs.trigger == 'tf'
-        run: terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
+        working-directory: terraform_infra
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: terraform apply -auto-approve tfplan | tee apply.txt
 
-      - name: Post Apply Comment
+      - name: Post Apply Result
         if: steps.trigger.outputs.trigger == 'apply' || steps.trigger.outputs.trigger == 'tf'
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
             ### 🚀 Terraform Apply Result
-            <details><summary>Click to expand logs</summary>
+            <details><summary>View Logs</summary>
 
             ```terraform
-            $(cat apply.txt)
+            $(cat terraform_infra/apply.txt)
             ```
 
             </details>
