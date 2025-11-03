@@ -58,13 +58,23 @@ jobs:
 
       # ─────────── Backend Init (Only for Apply / Manual Dispatch) ───────────
       - name: Backend Init
+        id: backend
         if: |
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
         run: |
           echo "🔹 Initializing Terraform backend..."
           terraform -chdir=terraform_backend init -input=false
-          terraform -chdir=terraform_backend plan -no-color | tee backend_plan.txt
+          terraform -chdir=terraform_backend apply -auto-approve -no-color | tee backend_apply.txt
+
+          echo "🔹 Capturing backend outputs..."
+          TF_BUCKET=$(terraform -chdir=terraform_backend output -raw tf_state_bucket)
+          TF_LOCKTABLE=$(terraform -chdir=terraform_backend output -raw tf_state_lock_table)
+
+          echo "TF_BUCKET=$TF_BUCKET" >> $GITHUB_ENV
+          echo "TF_LOCKTABLE=$TF_LOCKTABLE" >> $GITHUB_ENV
+
+          echo "✅ Backend setup complete: $TF_BUCKET / $TF_LOCKTABLE"
 
       # ─────────── Terraform Plan ───────────
       - name: Terraform Plan
@@ -78,6 +88,7 @@ jobs:
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
           terraform -chdir=terraform_infra plan -no-color | tee plan.txt
+
           {
             echo '### 🧩 Terraform Plan Result'
             echo '<details><summary>Click to view full plan logs</summary>'
@@ -105,14 +116,22 @@ jobs:
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
         run: |
+          echo "🔹 Configuring Terraform backend with outputs..."
+          cat <<EOF > terraform_infra/backend.auto.tfbackend
+          bucket         = "${TF_BUCKET}"
+          key            = "terraform.tfstate"
+          region         = "${AWS_REGION}"
+          dynamodb_table = "${TF_LOCKTABLE}"
+          EOF
+
           echo "🔹 Initializing Terraform with backend..."
-          terraform -chdir=terraform_infra init -reconfigure
+          terraform -chdir=terraform_infra init -backend-config=backend.auto.tfbackend -reconfigure
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
-          
+
           echo "🔹 Generating Terraform plan..."
           terraform -chdir=terraform_infra plan -out=tfplan -no-color | tee plan.txt
-          
+
           echo "🔹 Applying changes..."
           terraform -chdir=terraform_infra apply -auto-approve tfplan -no-color | tee apply.txt
 
