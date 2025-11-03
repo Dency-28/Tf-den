@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply
+    name: Terraform Plan (Local State)
     runs-on: ubuntu-latest
 
     env:
@@ -27,8 +27,7 @@ jobs:
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
-       (contains(github.event.comment.body, '/plan') ||
-        contains(github.event.comment.body, '/apply')))
+       contains(github.event.comment.body, '/plan'))
 
     steps:
       # ─────────── Checkout Repo ───────────
@@ -56,24 +55,17 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           state: open
 
-      # ─────────── Backend Setup ───────────
-      - name: Init & Apply Backend
-        run: |
-          terraform -chdir=terraform_backend init -input=false
-          terraform -chdir=terraform_backend plan -no-color | tee plan.txt
-
-      # ─────────── Terraform Plan ───────────
-      - name: Terraform Plan
+      # ─────────── Terraform Plan (Local Backend) ───────────
+      - name: Terraform Plan (No Backend)
         id: plan
-        if: |
-          github.event_name == 'pull_request' ||
-          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
         run: |
+          echo "🚫 Skipping remote backend — running plan locally."
+          terraform -chdir=terraform_infra init -backend=false -input=false
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
           terraform -chdir=terraform_infra plan -no-color | tee plan.txt
           {
-            echo '### 🧩 Terraform Plan Result'
+            echo '### 🧩 Terraform Plan Result (Local State)'
             echo '<details><summary>Click to view full plan logs</summary>'
             echo ''
             echo '```hcl'
@@ -89,7 +81,6 @@ jobs:
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.pr.outputs.number || github.event.issue.number }}
-          header: 🧩 Terraform Plan Output
+          header: 🧩 Terraform Plan Output (Local State)
           path: plan_comment.md
           recreate: true
-
