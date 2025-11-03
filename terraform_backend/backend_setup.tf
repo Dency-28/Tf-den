@@ -1,6 +1,11 @@
+# ✅ Generate random suffix so S3 & DynamoDB are unique
+resource "random_id" "suffix" {
+  byte_length = 4
+}
 
+# ✅ Create S3 bucket for remote backend
 resource "aws_s3_bucket" "tf_state" {
-  bucket        = "tf-state-dency"
+  bucket        = "tf-state-dency-${random_id.suffix.hex}"
   force_destroy = true
 
   tags = {
@@ -8,6 +13,7 @@ resource "aws_s3_bucket" "tf_state" {
   }
 }
 
+# ✅ Enable versioning
 resource "aws_s3_bucket_versioning" "tf_state_versioning" {
   bucket = aws_s3_bucket.tf_state.id
 
@@ -16,6 +22,7 @@ resource "aws_s3_bucket_versioning" "tf_state_versioning" {
   }
 }
 
+# ✅ Enable encryption
 resource "aws_s3_bucket_server_side_encryption_configuration" "tf_state_encryption" {
   bucket = aws_s3_bucket.tf_state.id
 
@@ -26,8 +33,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "tf_state_encrypti
   }
 }
 
+# ✅ Create DynamoDB table for locks
 resource "aws_dynamodb_table" "tf_locks" {
-  name         = "tf-state-locks"
+  name         = "tf-state-locks-${random_id.suffix.hex}"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "LockID"
 
@@ -41,3 +49,11 @@ resource "aws_dynamodb_table" "tf_locks" {
   }
 }
 
+# ✅ Outputs (used later in infra init)
+output "tf_state_bucket" {
+  value = aws_s3_bucket.tf_state.bucket
+}
+
+output "tf_state_lock_table" {
+  value = aws_dynamodb_table.tf_locks.name
+}
