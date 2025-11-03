@@ -62,25 +62,25 @@ jobs:
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
         run: |
+          echo "🔧 Initializing backend..."
           terraform -chdir=terraform_backend init -input=false
           terraform -chdir=terraform_backend plan -no-color | tee backend_plan.txt
 
-      # ─────────── Terraform Plan ───────────
-      - name: Terraform Plan
-        id: plan
+      # ─────────── Terraform Plan (for /plan) ───────────
+      - name: Terraform Plan (Local Backend)
+        id: plan_local
         if: |
           github.event_name == 'pull_request' ||
-          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan')) ||
-          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
+          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/plan'))
         run: |
-          # Use local backend for /plan to avoid remote S3 access
-          terraform -chdir=terraform_infra init -reconfigure $([ "${{ github.event.comment.body }}" == "/plan" ] && echo "-backend=false")
+          echo "🧩 Running PLAN with local backend (no S3)"
+          terraform -chdir=terraform_infra init -backend=false -reconfigure
           terraform -chdir=terraform_infra fmt
           terraform -chdir=terraform_infra validate
-          terraform -chdir=terraform_infra plan -out=tfplan -no-color | tee plan.txt
+          terraform -chdir=terraform_infra plan -no-color | tee plan.txt
 
           {
-            echo '### 🧩 Terraform Plan Result'
+            echo '### 🧩 Terraform Plan (Local) Result'
             echo '<details><summary>Click to view full plan logs</summary>'
             echo ''
             echo '```hcl'
@@ -89,8 +89,32 @@ jobs:
             echo '</details>'
           } > plan_comment.md
 
+      # ─────────── Terraform Plan (for /apply) ───────────
+      - name: Terraform Plan (Remote Backend)
+        id: plan_remote
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
+        run: |
+          echo "🧩 Running PLAN with remote backend (S3)"
+          terraform -chdir=terraform_infra init -reconfigure
+          terraform -chdir=terraform_infra fmt
+          terraform -chdir=terraform_infra validate
+          terraform -chdir=terraform_infra plan -out=tfplan -no-color | tee plan.txt
+
+          {
+            echo '### 🧩 Terraform Plan (Remote) Result'
+            echo '<details><summary>Click to view full plan logs</summary>'
+            echo ''
+            echo '```hcl'
+            cat plan.txt
+            echo '```'
+            echo '</details>'
+          } > plan_comment.md
+
+      # ─────────── Post Plan Output ───────────
       - name: Post Plan Output
-        if: steps.plan.conclusion == 'success'
+        if: steps.plan_local.conclusion == 'success' || steps.plan_remote.conclusion == 'success'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -106,6 +130,7 @@ jobs:
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
         run: |
+          echo "🚀 Running Terraform Apply"
           terraform -chdir=terraform_infra apply -auto-approve tfplan -no-color | tee apply.txt
 
           EC2_IP=$(terraform -chdir=terraform_infra output -raw ec2_public_ip || echo "N/A")
@@ -124,6 +149,7 @@ jobs:
             echo '**RDS Endpoint:** '"$RDS_ENDPOINT"
           } > apply_comment.md
 
+      # ─────────── Post Apply Output ───────────
       - name: Post Apply Output
         if: steps.apply.conclusion == 'success'
         uses: marocchino/sticky-pull-request-comment@v2
