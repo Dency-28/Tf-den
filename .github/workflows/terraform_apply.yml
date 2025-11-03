@@ -20,10 +20,9 @@ jobs:
     name: Terraform Plan & Apply
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: us-east-1
+      AWS_REGION: ${{ secrets.AWS_REGION }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      TF_IN_AUTOMATION: true
 
     steps:
       - name: Checkout Repository
@@ -34,17 +33,14 @@ jobs:
         with:
           terraform_version: 1.8.5
 
-      # 🟢 Initialize Backend (fixes “backend init required”)
+      # ✅ Initialize backend with credentials
       - name: Terraform Init (with reconfigure)
-        id: init
         run: terraform -chdir=terraform_infra init -reconfigure
 
-      # ✅ Validate
       - name: Terraform Validate
-        id: validate
         run: terraform -chdir=terraform_infra validate
 
-      # 🟡 Detect Trigger
+      # Detect comment trigger
       - name: Check for Comment Trigger
         id: trigger
         if: github.event_name == 'issue_comment'
@@ -60,10 +56,9 @@ jobs:
             echo "trigger=none" >> $GITHUB_OUTPUT
           fi
 
-      # 🟢 Terraform Plan
+      # Terraform Plan
       - name: Terraform Plan
         if: steps.trigger.outputs.trigger == 'plan' || steps.trigger.outputs.trigger == 'tf'
-        id: plan
         run: terraform -chdir=terraform_infra plan -out=tfplan | tee plan.txt
 
       - name: Post Plan Comment
@@ -76,15 +71,14 @@ jobs:
             <details><summary>Click to expand</summary>
 
             ```terraform
-            ${{ steps.plan.outputs.stdout }}
+            $(cat plan.txt)
             ```
 
             </details>
 
-      # 🟢 Terraform Apply
+      # Terraform Apply
       - name: Terraform Apply
         if: steps.trigger.outputs.trigger == 'apply' || steps.trigger.outputs.trigger == 'tf'
-        id: apply
         run: terraform -chdir=terraform_infra apply -auto-approve tfplan | tee apply.txt
 
       - name: Post Apply Comment
@@ -97,7 +91,7 @@ jobs:
             <details><summary>Click to expand logs</summary>
 
             ```terraform
-            ${{ steps.apply.outputs.stdout }}
+            $(cat apply.txt)
             ```
 
             </details>
