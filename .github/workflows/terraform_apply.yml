@@ -60,7 +60,7 @@ jobs:
       - name: Init & Apply Backend
         run: |
           terraform -chdir=terraform_backend init -input=false
-          terraform -chdir=terraform_backend plan -auto-approve
+          terraform -chdir=terraform_backend plan -no-color | tee plan.txt
 
       # ─────────── Terraform Plan ───────────
       - name: Terraform Plan
