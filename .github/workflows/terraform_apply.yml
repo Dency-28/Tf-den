@@ -1,4 +1,4 @@
-name: Terraform Plan (Local State)
+name: Terraform 
 
 on:
   pull_request:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   terraform-plan:
-    name: Terraform Plan (Local State)
+    name: Terraform Plan 
     runs-on: ubuntu-latest
 
     if: |
@@ -48,9 +48,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # ✅ Fix: Comment out remote backend before running plan
       - name: Terraform Init (No Backend)
         run: |
-          echo "🚫 Skipping remote backend — running plan locally."
+          echo "🚫 Skipping remote backend — commenting out backend config..."
+          # Comment out 'backend "s3"' line to prevent Terraform from expecting remote backend
+          sed -i 's/^ *backend /# backend /' terraform_infra/backend.tf || true
+          
+          echo "🧩 Initializing Terraform (local backend only)..."
           rm -rf terraform_infra/.terraform terraform_infra/.terraform.lock.hcl || true
           terraform -chdir=terraform_infra init -backend=false -input=false
 
@@ -64,6 +69,7 @@ jobs:
         run: |
           echo "🧩 Running Terraform plan locally (no backend)..."
           terraform -chdir=terraform_infra plan -no-color | tee plan.txt
+          
           {
             echo '### 🧩 Terraform Plan Result (Local State)'
             echo '<details><summary>Click to view full plan logs</summary>'
