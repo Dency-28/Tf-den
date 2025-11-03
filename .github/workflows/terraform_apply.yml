@@ -48,12 +48,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ✅ Fix: Comment out remote backend before running plan
+      # ✅ Fix: Comment out the entire backend block before running plan
       - name: Terraform Init (No Backend)
         run: |
-          echo "🚫 Skipping remote backend — commenting out backend config..."
-          # Comment out 'backend "s3"' line to prevent Terraform from expecting remote backend
-          sed -i 's/^ *backend /# backend /' terraform_infra/backend.tf || true
+          echo "🚫 Skipping remote backend — disabling full backend block..."
+          # Comment out all lines from 'backend "s3" {' to the closing '}'
+          sed -i '/backend "s3" {/,/}/ s/^/#/' terraform_infra/backend.tf || true
           
           echo "🧩 Initializing Terraform (local backend only)..."
           rm -rf terraform_infra/.terraform terraform_infra/.terraform.lock.hcl || true
