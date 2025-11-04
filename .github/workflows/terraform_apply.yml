@@ -47,7 +47,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      
+      # 🧩 Disable backend only for plan
+      - name: Terraform Init (Local for Plan)
+        if: |
+          github.event_name != 'issue_comment' ||
+          contains(github.event.comment.body, '/plan')
+        run: |
+          echo "🚫 Using local backend for PLAN..."
+          sed -i '/backend "s3" {/,/}/ s/^/#/' terraform_infra/backend.tf || true
+          rm -rf terraform_infra/.terraform terraform_infra/.terraform.lock.hcl || true
+          terraform -chdir=terraform_infra init -backend=false -input=false
+
       - name: Terraform Init (Real for Apply)
         if: |
           github.event_name == 'issue_comment' &&
