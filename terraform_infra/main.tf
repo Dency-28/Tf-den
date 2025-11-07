@@ -11,9 +11,7 @@ terraform {
   }
 }
 
-# ───────────────
 # VPC and Subnets
-# ───────────────
 resource "aws_vpc" "demo_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
@@ -23,7 +21,7 @@ resource "aws_vpc" "demo_vpc" {
 resource "aws_subnet" "demo_public_subnet" {
   vpc_id                  = aws_vpc.demo_vpc.id
   cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = false  # remove public IP to pass tfsec
+  map_public_ip_on_launch = false  # restrict public IP
   availability_zone       = "us-east-1a"
   tags = { Name = "demo-public-subnet" }
 }
@@ -42,13 +40,11 @@ resource "aws_subnet" "demo_private_subnet_b" {
   tags = { Name = "demo-private-subnet-b" }
 }
 
-# Internet Gateway
 resource "aws_internet_gateway" "demo_igw" {
   vpc_id = aws_vpc.demo_vpc.id
   tags   = { Name = "demo-igw" }
 }
 
-# Public Route Table
 resource "aws_route_table" "demo_public_rt" {
   vpc_id = aws_vpc.demo_vpc.id
 
@@ -65,17 +61,14 @@ resource "aws_route_table_association" "demo_public_assoc" {
   route_table_id = aws_route_table.demo_public_rt.id
 }
 
-# ───────────────
 # Security Group
-# ───────────────
 resource "aws_security_group" "ec2_sg" {
   name        = "ec2-sg-demo"
-  description = "Allow limited access"
+  description = "Restricted SG"
   vpc_id      = aws_vpc.demo_vpc.id
 
-  # Restrictive ingress (example: only from 10.0.0.0/16 VPC CIDR)
   ingress {
-    description = "SSH"
+    description = "SSH from trusted IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -83,17 +76,9 @@ resource "aws_security_group" "ec2_sg" {
   }
 
   ingress {
-    description = "HTTP"
+    description = "HTTP internal"
     from_port   = 80
     to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]
-  }
-
-  ingress {
-    description = "HTTPS"
-    from_port   = 443
-    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["10.0.0.0/16"]
   }
@@ -106,32 +91,62 @@ resource "aws_security_group" "ec2_sg" {
   }
 }
 
-# ───────────────
+# IAM Role & Profile
+resource "aws_iam_role" "ec2_role" {
+  name = "ec2-s3-role-demo1"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_policy_attachment" "ec2_s3_attach" {
+  name       = "ec2-s3-attach-demo"
+  roles      = [aws_iam_role.ec2_role.name]
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+}
+
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "ec2-instance-profile-demo11"
+  role = aws_iam_role.ec2_role.name
+}
+
 # EC2 Instance
-# ───────────────
 resource "aws_instance" "demo" {
   ami                         = "ami-08982f1c5bf93d976"
   instance_type               = "t3.micro"
-  subnet_id                   = aws_subnet.demo_private_subnet_a.id
+  subnet_id                   = aws_subnet.demo_public_subnet.id
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   key_name                    = "deployer_new"
   associate_public_ip_address = false
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
 
-  root_block_device {
-    encrypted = true
-  }
-
   metadata_options {
     http_tokens = "required"
+  }
+
+  root_block_device {
+    encrypted = true
   }
 
   tags = { Name = "Tf-Demo-EC2" }
 }
 
-# ───────────────
 # RDS
-# ───────────────
+resource "aws_db_subnet_group" "rds_subnet" {
+  name       = "rds-subnet-group-demo11"
+  subnet_ids = [
+    aws_subnet.demo_private_subnet_a.id,
+    aws_subnet.demo_private_subnet_b.id
+  ]
+  tags = { Name = "rds-subnet-group-demo" }
+}
+
 resource "aws_db_instance" "mydb" {
   allocated_storage      = 20
   engine                 = "mysql"
@@ -142,19 +157,13 @@ resource "aws_db_instance" "mydb" {
   password               = "Admin12345!"
   db_subnet_group_name   = aws_db_subnet_group.rds_subnet.name
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  skip_final_snapshot    = true
   storage_encrypted      = true
-  deletion_protection    = true
   backup_retention_period = 7
-  iam_database_authentication_enabled = true
+  skip_final_snapshot    = false
 }
 
-# ───────────────
-# Outputs
-# ───────────────
 output "ec2_public_ip" {
-  description = "Public IP of EC2 instance"
-  value       = aws_instance.demo.public_ip
+  value = aws_instance.demo.public_ip
 }
 
 output "rds_endpoint" {
