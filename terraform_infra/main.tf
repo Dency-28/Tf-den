@@ -11,40 +11,46 @@ terraform {
   }
 }
 
+# ───────────────
 # VPC and Subnets
+# ───────────────
 resource "aws_vpc" "demo_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
-  tags = { Name = "demo-vpc" }
+  tags                 = { Name = "demo-vpc" }
 }
 
 resource "aws_subnet" "demo_public_subnet" {
   vpc_id                  = aws_vpc.demo_vpc.id
   cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = false  # restrict public IP
+  map_public_ip_on_launch = true
   availability_zone       = "us-east-1a"
-  tags = { Name = "demo-public-subnet" }
+  tags                    = { Name = "demo-public-subnet" }
 }
 
 resource "aws_subnet" "demo_private_subnet_a" {
   vpc_id            = aws_vpc.demo_vpc.id
   cidr_block        = "10.0.2.0/24"
   availability_zone = "us-east-1a"
-  tags = { Name = "demo-private-subnet-a" }
+  tags              = { Name = "demo-private-subnet-a" }
 }
 
 resource "aws_subnet" "demo_private_subnet_b" {
   vpc_id            = aws_vpc.demo_vpc.id
   cidr_block        = "10.0.3.0/24"
   availability_zone = "us-east-1b"
-  tags = { Name = "demo-private-subnet-b" }
+  tags              = { Name = "demo-private-subnet-b" }
 }
 
+# ───────────────
+# Internet Gateway
+# ───────────────
 resource "aws_internet_gateway" "demo_igw" {
   vpc_id = aws_vpc.demo_vpc.id
   tags   = { Name = "demo-igw" }
 }
 
+# Public Route Table
 resource "aws_route_table" "demo_public_rt" {
   vpc_id = aws_vpc.demo_vpc.id
 
@@ -61,37 +67,89 @@ resource "aws_route_table_association" "demo_public_assoc" {
   route_table_id = aws_route_table.demo_public_rt.id
 }
 
-# Security Group
+# ───────────────
+# Security Group for EC2
+# ───────────────
 resource "aws_security_group" "ec2_sg" {
   name        = "ec2-sg-demo"
-  description = "Restricted SG"
+  description = "Allow SSH, HTTP, HTTPS, Frontend, Backend"
   vpc_id      = aws_vpc.demo_vpc.id
 
   ingress {
-    description = "SSH from trusted IP"
+    description = "SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    description = "HTTP internal"
+    description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Frontend app"
+    from_port   = 5000
+    to_port     = 5000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Backend app"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Node exporter"
+    from_port   = 9100
+    to_port     = 9100
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Prometheus"
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Grafana"
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["10.0.0.0/16"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
-# IAM Role & Profile
+# ───────────────
+# IAM Role & Instance Profile
+# ───────────────
 resource "aws_iam_role" "ec2_role" {
   name = "ec2-s3-role-demo1"
 
@@ -116,28 +174,24 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_role.name
 }
 
+# ───────────────
 # EC2 Instance
+# ───────────────
 resource "aws_instance" "demo" {
   ami                         = "ami-08982f1c5bf93d976"
   instance_type               = "t3.micro"
   subnet_id                   = aws_subnet.demo_public_subnet.id
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   key_name                    = "deployer_new"
-  associate_public_ip_address = false
+  associate_public_ip_address = true
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
-
-  metadata_options {
-    http_tokens = "required"
-  }
-
-  root_block_device {
-    encrypted = true
-  }
 
   tags = { Name = "Tf-Demo-EC2" }
 }
 
-# RDS
+# ───────────────
+# RDS Subnet Group & Instance
+# ───────────────
 resource "aws_db_subnet_group" "rds_subnet" {
   name       = "rds-subnet-group-demo11"
   subnet_ids = [
@@ -157,13 +211,34 @@ resource "aws_db_instance" "mydb" {
   password               = "Admin12345!"
   db_subnet_group_name   = aws_db_subnet_group.rds_subnet.name
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  storage_encrypted      = true
-  backup_retention_period = 7
-  skip_final_snapshot    = false
+  skip_final_snapshot    = true
+
+  # ─────────────── tfsec fixes ───────────────
+  iam_database_authentication_enabled = true
+  deletion_protection                 = true
 }
 
+# ───────────────
+# VPC Flow Logs
+# ───────────────
+resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
+  name              = "/vpc/flow-logs/demo-vpc"
+  retention_in_days = 30
+}
+
+resource "aws_flow_log" "vpc_flow_log" {
+  log_destination      = aws_cloudwatch_log_group.vpc_flow_logs.arn
+  log_destination_type = "cloud-watch-logs"
+  traffic_type         = "ALL"
+  vpc_id               = aws_vpc.demo_vpc.id
+}
+
+# ───────────────
+# Outputs
+# ───────────────
 output "ec2_public_ip" {
-  value = aws_instance.demo.public_ip
+  description = "Public IP of EC2 instance"
+  value       = aws_instance.demo.public_ip
 }
 
 output "rds_endpoint" {
