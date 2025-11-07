@@ -23,7 +23,7 @@ resource "aws_vpc" "demo_vpc" {
 resource "aws_subnet" "demo_public_subnet" {
   vpc_id                  = aws_vpc.demo_vpc.id
   cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false  # remove public IP to pass tfsec
   availability_zone       = "us-east-1a"
   tags = { Name = "demo-public-subnet" }
 }
@@ -66,19 +66,20 @@ resource "aws_route_table_association" "demo_public_assoc" {
 }
 
 # ───────────────
-# Security Group for EC2
+# Security Group
 # ───────────────
 resource "aws_security_group" "ec2_sg" {
   name        = "ec2-sg-demo"
-  description = "Allow SSH, HTTP, HTTPS, Frontend, Backend"
+  description = "Allow limited access"
   vpc_id      = aws_vpc.demo_vpc.id
 
+  # Restrictive ingress (example: only from 10.0.0.0/16 VPC CIDR)
   ingress {
     description = "SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/16"]
   }
 
   ingress {
@@ -86,7 +87,7 @@ resource "aws_security_group" "ec2_sg" {
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/16"]
   }
 
   ingress {
@@ -94,82 +95,15 @@ resource "aws_security_group" "ec2_sg" {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Frontend app"
-    from_port   = 5000
-    to_port     = 5000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Backend app"
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Node exporter"
-    from_port   = 9100
-    to_port     = 9100
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Prometheus"
-    from_port   = 9090
-    to_port     = 9090
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Grafana"
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/16"]
   }
 
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/16"]
   }
-}
-
-# ───────────────
-# IAM Role & Instance Profile
-# ───────────────
-resource "aws_iam_role" "ec2_role" {
-  name = "ec2-s3-role-demo1"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "ec2.amazonaws.com" }
-    }]
-  })
-}
-
-resource "aws_iam_policy_attachment" "ec2_s3_attach" {
-  name       = "ec2-s3-attach-demo"
-  roles      = [aws_iam_role.ec2_role.name]
-  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
-}
-
-resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "ec2-instance-profile-demo11"
-  role = aws_iam_role.ec2_role.name
 }
 
 # ───────────────
@@ -178,27 +112,26 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 resource "aws_instance" "demo" {
   ami                         = "ami-08982f1c5bf93d976"
   instance_type               = "t3.micro"
-  subnet_id                   = aws_subnet.demo_public_subnet.id
+  subnet_id                   = aws_subnet.demo_private_subnet_a.id
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   key_name                    = "deployer_new"
-  associate_public_ip_address = true
+  associate_public_ip_address = false
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
+
+  root_block_device {
+    encrypted = true
+  }
+
+  metadata_options {
+    http_tokens = "required"
+  }
 
   tags = { Name = "Tf-Demo-EC2" }
 }
 
 # ───────────────
-# RDS Subnet Group & Instance
+# RDS
 # ───────────────
-resource "aws_db_subnet_group" "rds_subnet" {
-  name       = "rds-subnet-group-demo11"
-  subnet_ids = [
-    aws_subnet.demo_private_subnet_a.id,
-    aws_subnet.demo_private_subnet_b.id
-  ]
-  tags = { Name = "rds-subnet-group-demo" }
-}
-
 resource "aws_db_instance" "mydb" {
   allocated_storage      = 20
   engine                 = "mysql"
@@ -210,6 +143,10 @@ resource "aws_db_instance" "mydb" {
   db_subnet_group_name   = aws_db_subnet_group.rds_subnet.name
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
   skip_final_snapshot    = true
+  storage_encrypted      = true
+  deletion_protection    = true
+  backup_retention_period = 7
+  iam_database_authentication_enabled = true
 }
 
 # ───────────────
